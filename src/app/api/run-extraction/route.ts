@@ -612,7 +612,7 @@ ${ctxSlice}`,
                 // Fallback TTM: sum m1..m12 if no TTM was given (common with partial-year docs).
                 // Then fall back to the most recent year column that's populated.
                 const monthlySum = [r.m1,r.m2,r.m3,r.m4,r.m5,r.m6,r.m7,r.m8,r.m9,r.m10,r.m11,r.m12]
-                  .reduce((s, v) => s + (v || 0), 0);
+                  .reduce((s: number, v) => s + (v || 0), 0);
                 const latestYear = r.y2025 || r.y2024 || r.y2023 || r.y2022 || r.y2021
                   || (r as unknown as { y2020?: number; y2019?: number }).y2020
                   || (r as unknown as { y2019?: number }).y2019 || 0;
