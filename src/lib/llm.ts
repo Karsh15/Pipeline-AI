@@ -7,9 +7,9 @@ const OLLAMA_URL   = process.env.OLLAMA_URL   || "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:3b-instruct-q4_K_M";
 const USE_LOCAL    = (process.env.USE_LOCAL_LLM || "true").toLowerCase() === "true";
 
-// NVIDIA NIM hosts llama-3.3-70b, deepseek-v3, and many others via OpenAI-compatible API.
+// NVIDIA NIM hosts Nemotron-120B, DeepSeek-V3, and many others via OpenAI-compatible API.
 const NVIDIA_BASE   = "https://integrate.api.nvidia.com/v1";
-const NVIDIA_MODEL  = process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct";
+const NVIDIA_MODEL  = process.env.NVIDIA_MODEL || "nvidia/nemotron-3-super-120b-a12b";
 const NVIDIA_KEY    = process.env.NVIDIA_API_KEY;
 
 /**
@@ -19,9 +19,9 @@ const NVIDIA_KEY    = process.env.NVIDIA_API_KEY;
  *   REASONING   — financial / risk / underwriting (needs deep math + logic)
  */
 export const MODELS = {
-  LIGHT:     "meta/llama-3.1-8b-instruct",    // NIM: fast, cheap distillation
-  STANDARD:  "meta/llama-3.3-70b-instruct",   // NIM: main extraction agents
-  REASONING: "deepseek-ai/deepseek-v3.2",     // NIM: financial reasoning (latest DeepSeek)
+  LIGHT:     "nvidia/nemotron-3-super-120b-a12b",   // NIM: fast tasks (questions, distillation)
+  STANDARD:  "nvidia/nemotron-3-super-120b-a12b",   // NIM: main extraction agents
+  REASONING: "deepseek-ai/deepseek-v3.2",           // NIM: financial reasoning (latest DeepSeek)
 } as const;
 
 export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
@@ -132,16 +132,21 @@ async function ollamaChat(opts: ChatOptions): Promise<string> {
 }
 
 async function groqChat(opts: ChatOptions): Promise<string> {
-  // Groq doesn't host DeepSeek / NIM-style models — map them to Groq's best Llama.
+  // Groq doesn't host NIM/DeepSeek models — map any vendor/model slug to Groq's best.
   const requested = opts.model ?? "llama-3.3-70b-versatile";
   const groqModel = requested.includes("/") ? "llama-3.3-70b-versatile" : requested;
-  // Cascading model fallback: 70B rate-limited/too-large → 8B with tighter truncation.
+
+  // Three-tier cascade: 70B → 8B (tighter ctx) → gemma2-9b (smallest, last resort on 429/413)
   const fallbacks: { model: string; maxChars: number }[] = groqModel === "llama-3.3-70b-versatile"
     ? [
-        { model: "llama-3.3-70b-versatile", maxChars: 60_000 },  // ~128K ctx, safe budget
-        { model: "llama-3.1-8b-instant",    maxChars: 20_000 },  // ~32K ctx, tight
+        { model: "llama-3.3-70b-versatile", maxChars: 40_000 },  // ~128K ctx, conservative budget
+        { model: "llama-3.1-8b-instant",    maxChars: 10_000 },  // ~32K ctx, tight
+        { model: "gemma2-9b-it",            maxChars:  6_000 },  // 8K ctx, last resort
       ]
-    : [{ model: groqModel, maxChars: 20_000 }];
+    : [
+        { model: groqModel,      maxChars: 10_000 },
+        { model: "gemma2-9b-it", maxChars:  6_000 },
+      ];
 
   let lastErr: unknown;
   for (const { model, maxChars } of fallbacks) {
@@ -152,11 +157,11 @@ async function groqChat(opts: ChatOptions): Promise<string> {
         temperature: opts.temperature ?? 0.2,
         messages:    truncateMessages(opts.messages, maxChars),
       });
+      if (model !== groqModel) console.info(`[llm] groq fallback succeeded on ${model}`);
       return r.choices[0]?.message?.content ?? "";
     } catch (err: unknown) {
       lastErr = err;
       const status = (err as { status?: number })?.status;
-      // 429 = rate limit, 413 = payload too large — try next model; otherwise give up
       if (status !== 429 && status !== 413) throw err;
       console.warn(`[llm] ${model} rate-limited or oversized (${status}), trying next fallback...`);
     }

@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
           for (const chunk of chunks) {
             try {
               const reply = await chat({
-                prefer: "nvidia",  // NVIDIA NIM — no TPM rate limit issues
+                prefer: "cloud",  // NVIDIA → Groq → Ollama cascade on timeout/429
                 model: MODELS.LIGHT,
                 max_tokens: 400,
                 temperature: 0.1,
@@ -846,14 +846,14 @@ DOCUMENTS:\n${ctx}`,
         await db.from("deals").update({ status: "underwriting" }).eq("id", dealId);
 
         emit(controller, enc, { type: "complete", stage: "underwriting" });
-        controller.close();
+        try { controller.close(); } catch { /* browser already disconnected */ }
       } catch (err) {
         console.error("[run-extraction] fatal:", err);
         const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
         emit(controller, enc, { type: "error", message: msg });
         await db.from("ai_jobs").update({ status: "failed", result: { error: msg } })
           .eq("deal_id", dealId).eq("job_type", "extraction");
-        controller.close();
+        try { controller.close(); } catch { /* browser already disconnected */ }
       }
     },
   });

@@ -122,10 +122,10 @@ DEAL DATA:\n${context}`,
         await db.from("deals").update({ status: "review" }).eq("id", dealId);
 
         emit(controller, enc, { type: "complete", stage: "review", result: uwJson });
-        controller.close();
+        try { controller.close(); } catch { /* browser already disconnected */ }
       } catch (err) {
         emit(controller, enc, { type: "error", message: String(err) });
-        controller.close();
+        try { controller.close(); } catch { /* browser already disconnected */ }
       }
     },
   });
