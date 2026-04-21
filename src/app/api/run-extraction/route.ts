@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
           for (const chunk of chunks) {
             try {
               const reply = await chat({
-                prefer: "cloud",  // NVIDIA → Groq → Ollama cascade on timeout/429
+                agent: "distill",
                 model: MODELS.LIGHT,
                 max_tokens: 400,
                 temperature: 0.1,
@@ -320,8 +320,8 @@ export async function POST(req: NextRequest) {
           emit(controller, enc, { type: "log", agent: "metadata", message: `  ↳ context: ${ctx.length.toLocaleString()} chars (raw)` });
 
           const raw = await chat({
-            prefer: "cloud",
-            model: MODELS.STANDARD,  // Llama 3.3 70B — good enough for structured extraction
+            agent: "metadata",
+            model: MODELS.STANDARD,
             max_tokens: 1024,
             temperature: 0.1,
             messages: [{
@@ -440,15 +440,15 @@ ${ctx}`,
           emit(controller, enc, { type: "log", agent: "financial", message: `  ↳ context: ${ctx.length.toLocaleString()} chars (raw)` });
           // Retry with smaller context on NIM timeouts; cloudChain falls back to Groq if NIM keeps failing.
           let raw = "";
-          const financialCtxSizes = [12000, 8000, 5000];
+          const financialCtxSizes = [8000, 5000, 3000];
           let lastFinErr: unknown;
           let succeeded = false;
           for (const ctxSize of financialCtxSizes) {
             const ctxSlice = ctx.slice(0, ctxSize);
             try {
               raw = await chat({
-                prefer: "cloud",
-                model: MODELS.REASONING,
+                agent: "financial",
+                model: MODELS.STANDARD,
                 max_tokens: 2048,
                 temperature: 0.1,
             messages: [{
@@ -655,8 +655,8 @@ ${ctxSlice}`,
           const ctx = buildRawContext(10000, ["rent_roll", "om", "financial"]);
           emit(controller, enc, { type: "log", agent: "unit_mix", message: `  ↳ context: ${ctx.length.toLocaleString()} chars (raw)` });
           const raw = await chat({
-            prefer: "cloud",
-            model: MODELS.STANDARD,  // Llama 3.3 70B — good at structured tables
+            agent: "unit_mix",
+            model: MODELS.STANDARD,
             max_tokens: 1536,
             temperature: 0.1,
             messages: [{
@@ -723,8 +723,8 @@ ${ctx}`,
         await runAgent("summary", async () => {
           const ctx = buildContext(BUDGET, ["om", "market"]);
           const raw = await chat({
-            prefer: "cloud",
-            model: MODELS.STANDARD,  // Llama 70B — good narrative
+            agent: "summary",
+            model: MODELS.STANDARD,
             max_tokens: 1024,
             messages: [{
               role: "system", content: "Real estate analyst. Output ONLY a raw JSON object. No preamble.",
@@ -751,8 +751,8 @@ DOCUMENTS:\n${ctx}`,
         await runAgent("questions", async () => {
           const ctx = buildContext(BUDGET);
           const raw = await chat({
-            prefer: "cloud",
-            model: MODELS.LIGHT,  // Llama 8B — fast and plenty for DD question generation
+            agent: "questions",
+            model: MODELS.LIGHT,
             max_tokens: 1024,
             messages: [{
               role: "system", content: "CRE analyst. Output ONLY a raw JSON object. No preamble.",
@@ -779,8 +779,8 @@ DOCUMENTS:\n${ctx}`,
         await runAgent("criteria", async () => {
           const ctx = buildContext(BUDGET, ["financial", "om", "rent_roll"]);
           const raw = await chat({
-            prefer: "cloud",
-            model: MODELS.STANDARD,  // Llama 70B — good at meets/fails logic
+            agent: "criteria",
+            model: MODELS.STANDARD,
             max_tokens: 1024,
             messages: [{
               role: "system", content: "CRE underwriter. Output ONLY a raw JSON object. No preamble.",
@@ -806,8 +806,8 @@ DOCUMENTS:\n${ctx}`,
         await runAgent("risks", async () => {
           const ctx = buildContext(BUDGET, ["legal", "capex", "financial"]);
           const raw = await chat({
-            prefer: "cloud",
-            model: MODELS.REASONING,  // DeepSeek V3 — deep reasoning for real risk analysis
+            agent: "risks",
+            model: MODELS.STANDARD,
             max_tokens: 1536,
             messages: [{
               role: "system", content: "CRE risk analyst. Output ONLY a raw JSON object. No preamble.",

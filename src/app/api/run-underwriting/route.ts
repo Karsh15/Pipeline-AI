@@ -35,8 +35,8 @@ export async function POST(req: NextRequest) {
         emit(controller, enc, { type: "log", agent: "underwriting", message: "Calculating underwritten NOI..." });
 
         const uwRaw = await chat({
-          prefer: "cloud",
-          model: MODELS.REASONING,  // DeepSeek V3 — best at DSCR / IRR / cap-rate math
+          agent: "underwriting",
+          model: MODELS.STANDARD,
           max_tokens: 2048,
           messages: [{
             role: "system",

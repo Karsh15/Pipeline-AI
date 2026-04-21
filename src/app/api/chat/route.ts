@@ -52,8 +52,8 @@ ${context}`,
   ];
 
   const reply = await chat({
-    prefer: "cloud",
-    model: MODELS.REASONING,  // DeepSeek V3 — best for deal Q&A + cross-doc reasoning
+    agent: "chat",
+    model: MODELS.REASONING,
     max_tokens: 1024,
     messages,
   }) || "I couldn't generate a response.";
