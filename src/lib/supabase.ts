@@ -40,10 +40,31 @@ export interface DBDeal {
   year_built: number | null;
   noi: number | null;
   cap_rate: number | null;
+  dscr: number | null;
   broker_narrative: string | null;
   location_insight: string | null;
   status: PipelineStatus;
   created_at: string;
+  // Extended fields
+  broker_phone: string | null;
+  broker_email: string | null;
+  broker_website: string | null;
+  lot_size_acres: number | null;
+  floors: number | null;
+  parking_spaces: number | null;
+  renovation_year: number | null;
+  occupancy_rate: number | null;
+  loan_amount: number | null;
+  loan_type: string | null;
+  interest_rate: number | null;
+  loan_maturity: string | null;
+  market_name: string | null;
+  submarket: string | null;
+  zoning: string | null;
+  construction_type: string | null;
+  amenities_summary: string | null;
+  franchise_expiry: string | null;
+  management_company: string | null;
 }
 
 export interface DBDocument {
@@ -79,6 +100,11 @@ export interface DBUnitMix {
   avg_rent: number;
   latest_lease_up: string | null;
   avg_utilities: number;
+  // Extended fields
+  market_rent:    number;   // market/asking rate for this unit type
+  annual_revenue: number;   // total_units × avg_rent × 12 (or TTM room revenue for hotel)
+  loss_to_lease:  number;   // market_rent - avg_base_rent per unit
+  physical_occ:   number;   // physical occupancy % for this type (0-100)
 }
 
 export interface DBFinancial {

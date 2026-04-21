@@ -1,0 +1,22 @@
+-- Migration: add extended deal fields
+alter table deals
+  add column if not exists broker_phone      text,
+  add column if not exists broker_email      text,
+  add column if not exists broker_website    text,
+  add column if not exists lot_size_acres    numeric(10,2),
+  add column if not exists floors            integer,
+  add column if not exists parking_spaces    integer,
+  add column if not exists renovation_year   integer,
+  add column if not exists occupancy_rate    numeric(5,2),
+  add column if not exists loan_amount       bigint,
+  add column if not exists loan_type         text,
+  add column if not exists interest_rate     numeric(5,3),
+  add column if not exists loan_maturity     text,
+  add column if not exists market_name       text,
+  add column if not exists submarket        text,
+  add column if not exists zoning            text,
+  add column if not exists construction_type text,
+  add column if not exists dscr              numeric(5,3),
+  add column if not exists amenities_summary text,
+  add column if not exists franchise_expiry  text,
+  add column if not exists management_company text;

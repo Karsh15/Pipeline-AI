@@ -142,10 +142,8 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
             if (evt.type === "error")                    setRunLog(p => [...p, `⚠ ERROR: ${evt.message}`]);
             if (evt.type === "agent_result" && evt.agent) {
               setAgentResults(p => ({ ...p, [evt.agent!]: evt.json ?? evt.raw ?? null }));
-              setRefreshKey(k => k + 1);
             }
             if (evt.type === "complete") {
-              setRefreshKey(k => k + 1);
               setRunLog(p => [...p, "✓ Extraction complete. Running underwriting…"]);
               triggerUnderwriting(deal.id, ctrl.signal).then(async uwStream => {
                 const r2 = uwStream.getReader();
@@ -158,7 +156,12 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
                     try {
                       const e2 = JSON.parse(l.slice(6)) as { type: string; message?: string };
                       if (e2.type === "log" && e2.message) setRunLog(p => [...p, e2.message!]);
-                      if (e2.type === "complete") { setRunLog(p => [...p, "✓ Pipeline complete!"]); setRunState("done"); abortRef.current = null; }
+                      if (e2.type === "complete") {
+                        setRunLog(p => [...p, "✓ Pipeline complete!"]);
+                        setRunState("done");
+                        setRefreshKey(k => k + 1);  // single refresh once fully done
+                        abortRef.current = null;
+                      }
                     } catch {}
                   });
                 }
@@ -409,28 +412,99 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
                 ))}
               </div>
 
-              {/* Details */}
-              <div className="grid grid-cols-2 gap-4">
-                {[
-                  { label: "Asset Type",     value: deal.asset_type,    field: "assetType"     },
-                  { label: "Property Type",  value: deal.property_type, field: "propertyType"  },
-                  { label: "Year Built",     value: deal.year_built,    field: "yearBuilt"     },
-                  { label: "Broker",         value: deal.broker,        field: "broker"        },
-                  { label: "Brand / Flag",   value: deal.brand,         field: "brand"         },
-                  { label: "Deal Lead",      value: deal.deal_lead,     field: "dealLead"      },
-                ].filter(r => r.value).map(r => (
-                  <div key={r.label}
-                    className="bg-slate-50 rounded-xl p-3 border border-border cursor-pointer group hover:border-primary/30 hover:bg-white hover:shadow-sm transition-all"
-                    onClick={() => setWhyPanel({ field: r.field, label: r.label, value: String(r.value) })}
-                  >
-                    <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-0.5 flex justify-between items-center">
-                      {r.label}
-                      <Sparkles className="h-3 w-3 text-violet-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+              {/* Details — property info */}
+              <div>
+                <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2">Property</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Asset Type",        value: deal.asset_type,                                          field: "assetType"        },
+                    { label: "Property Type",     value: deal.property_type,                                       field: "propertyType"     },
+                    { label: "Year Built",        value: deal.year_built ? String(deal.year_built) : null,         field: "yearBuilt"        },
+                    { label: "Renovation Year",   value: deal.renovation_year ? String(deal.renovation_year) : null, field: "renovationYear" },
+                    { label: "Brand / Flag",      value: deal.brand,                                               field: "brand"            },
+                    { label: "Construction",      value: deal.construction_type,                                   field: "constructionType" },
+                    { label: "Floors",            value: deal.floors ? String(deal.floors) : null,                 field: "floors"           },
+                    { label: "Parking Spaces",    value: deal.parking_spaces ? String(deal.parking_spaces) : null, field: "parkingSpaces"   },
+                    { label: "Lot Size (acres)",  value: deal.lot_size_acres ? String(deal.lot_size_acres) : null, field: "lotSizeAcres"    },
+                    { label: "Zoning",            value: deal.zoning,                                             field: "zoning"           },
+                    { label: "Occupancy",         value: deal.occupancy_rate ? `${deal.occupancy_rate}%` : null,   field: "occupancyRate"    },
+                    { label: "Management Co.",    value: deal.management_company,                                  field: "managementCompany"},
+                    { label: "Amenities",         value: deal.amenities_summary,                                   field: "amenitiesSummary" },
+                  ].filter(r => r.value).map(r => (
+                    <div key={r.label}
+                      className="bg-slate-50 rounded-xl p-3 border border-border cursor-pointer group hover:border-primary/30 hover:bg-white hover:shadow-sm transition-all"
+                      onClick={() => setWhyPanel({ field: r.field, label: r.label, value: String(r.value) })}
+                    >
+                      <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-0.5 flex justify-between items-center">
+                        {r.label}
+                        <Sparkles className="h-3 w-3 text-violet-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                      <div className="text-sm font-semibold text-foreground">{String(r.value)}</div>
                     </div>
-                    <div className="text-sm font-semibold text-foreground">{String(r.value)}</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
+
+              {/* Broker contact */}
+              <div>
+                <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2">Broker</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Firm",      value: deal.broker,          field: "broker"      },
+                    { label: "Deal Lead", value: deal.deal_lead,       field: "dealLead"    },
+                    { label: "Phone",     value: deal.broker_phone,    field: "brokerPhone" },
+                    { label: "Email",     value: deal.broker_email,    field: "brokerEmail" },
+                    { label: "Website",   value: deal.broker_website,  field: "brokerWebsite" },
+                    { label: "Market",    value: deal.market_name,     field: "marketName"  },
+                    { label: "Submarket", value: deal.submarket,       field: "submarket"   },
+                  ].filter(r => r.value).map(r => (
+                    <div key={r.label}
+                      className="bg-slate-50 rounded-xl p-3 border border-border cursor-pointer group hover:border-primary/30 hover:bg-white hover:shadow-sm transition-all"
+                      onClick={() => setWhyPanel({ field: r.field, label: r.label, value: String(r.value) })}
+                    >
+                      <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-0.5 flex justify-between items-center">
+                        {r.label}
+                        <Sparkles className="h-3 w-3 text-violet-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                      <div className="text-sm font-semibold text-foreground">{String(r.value)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Existing debt */}
+              {[deal.loan_amount, deal.loan_type, deal.loan_maturity].some(Boolean) && (
+                <div>
+                  <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2">Existing Debt</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { label: "Loan Amount",   value: deal.loan_amount ? `$${deal.loan_amount.toLocaleString()}` : null, field: "loanAmount"   },
+                      { label: "Loan Type",     value: deal.loan_type,                                                    field: "loanType"     },
+                      { label: "Interest Rate", value: deal.interest_rate ? `${deal.interest_rate}%` : null,              field: "interestRate" },
+                      { label: "Maturity",      value: deal.loan_maturity,                                                field: "loanMaturity" },
+                    ].filter(r => r.value).map(r => (
+                      <div key={r.label}
+                        className="bg-slate-50 rounded-xl p-3 border border-border cursor-pointer group hover:border-primary/30 hover:bg-white hover:shadow-sm transition-all"
+                        onClick={() => setWhyPanel({ field: r.field, label: r.label, value: String(r.value) })}
+                      >
+                        <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-0.5 flex justify-between items-center">
+                          {r.label}
+                          <Sparkles className="h-3 w-3 text-violet-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <div className="text-sm font-semibold text-foreground">{String(r.value)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Franchise */}
+              {deal.franchise_expiry && (
+                <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+                  <div className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">Franchise / Flag Expiry</div>
+                  <div className="text-sm font-semibold text-foreground">{deal.franchise_expiry}</div>
+                </div>
+              )}
 
               {/* Narratives */}
               {deal.broker_narrative && (
