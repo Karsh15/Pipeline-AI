@@ -1,0 +1,136 @@
+import { NextRequest } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase";
+import { chat, safeParse, MODELS } from "@/lib/llm";
+
+function emit(c: ReadableStreamDefaultController, enc: TextEncoder, data: object) {
+  // Client may have disconnected — DB writes still happen, just don't crash emit.
+  try {
+    c.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code !== "ERR_INVALID_STATE") throw err;
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const enc = new TextEncoder();
+  const { dealId } = await req.json() as { dealId: string };
+  const db = supabaseAdmin();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        await db.from("deals").update({ status: "underwriting" }).eq("id", dealId);
+        emit(controller, enc, { type: "stage", stage: "underwriting" });
+
+        // Gather all extracted data
+        const { data: deal }       = await db.from("deals").select("*").eq("id", dealId).single();
+        const { data: financials } = await db.from("financials").select("*").eq("deal_id", dealId);
+        const { data: unitMix }    = await db.from("unit_mix").select("*").eq("deal_id", dealId);
+        const { data: risks }      = await db.from("risks").select("*").eq("deal_id", dealId);
+
+        const context = JSON.stringify({ deal, financials, unitMix, risks }, null, 2).substring(0, 8000);
+
+        // ── NOI & Cap Rate Validation ──────────────────────────────────────
+        emit(controller, enc, { type: "log", agent: "underwriting", message: "Calculating underwritten NOI..." });
+
+        const uwRaw = await chat({
+          prefer: "cloud",
+          model: MODELS.REASONING,  // DeepSeek V3 — best at DSCR / IRR / cap-rate math
+          max_tokens: 2048,
+          messages: [{
+            role: "system",
+            content: "You are a CRE underwriter. Output ONLY a raw JSON object. No preamble, no 'Based on...', no markdown fences. Start reply with { and end with }.",
+          }, {
+            role: "user",
+            content: `Underwrite this deal. Return JSON:
+{
+  "underwrittenNOI": 0,
+  "stabilizedCapRate": 0,
+  "effectiveGrossIncome": 0,
+  "vacancyLoss": 0,
+  "operatingExpenses": 0,
+  "netOperatingIncome": 0,
+  "debtService": 0,
+  "dscr": 0,
+  "cashOnCash": 0,
+  "irr5yr": 0,
+  "exitCapRate": 0,
+  "buyBoxScore": 0,
+  "recommendation": "buy|watch|pass",
+  "rationale": "2-3 sentence investment rationale",
+  "keyAssumptions": ["assumption1","assumption2"]
+}
+DEAL DATA:\n${context}`,
+          }],
+        });
+
+        const uwJson = safeParse<Record<string, unknown>>(uwRaw, {});
+
+        // Save underwriting results as extracted_data fields
+        const uwFields = ["underwrittenNOI","stabilizedCapRate","effectiveGrossIncome","vacancyLoss",
+          "operatingExpenses","netOperatingIncome","debtService","dscr","cashOnCash","irr5yr",
+          "exitCapRate","buyBoxScore","recommendation","rationale"];
+
+        const inserts = uwFields
+          .filter(f => uwJson[f] !== undefined)
+          .map(f => ({
+            deal_id: dealId,
+            field_name: f,
+            value: String(uwJson[f]),
+            confidence_score: 0.88,
+            source_document_id: null,
+          }));
+
+        if (inserts.length) {
+          await db.from("extracted_data").delete().eq("deal_id", dealId).in("field_name", uwFields);
+          await db.from("extracted_data").insert(inserts);
+        }
+
+        // Update the top-level deal with underwritten NOI / cap rate
+        // (only if financial agent didn't already set them — don't overwrite)
+        const dealUpdate: Record<string, number> = {};
+        const uwNOI = Number(uwJson.underwrittenNOI || uwJson.netOperatingIncome || 0);
+        const uwCap = Number(uwJson.stabilizedCapRate || uwJson.exitCapRate || 0);
+        if (uwNOI > 1000 && (!deal?.noi || deal.noi === 0)) dealUpdate.noi      = uwNOI;
+        if (uwCap > 0 && (!deal?.cap_rate || Number(deal.cap_rate) === 0)) dealUpdate.cap_rate = uwCap;
+        if (Object.keys(dealUpdate).length) {
+          await db.from("deals").update(dealUpdate).eq("id", dealId);
+        }
+
+        // Add AI explanations for underwriting outputs
+        const explanations = [
+          { field_name: "underwrittenNOI", explanation_text: `Underwritten NOI of $${(uwJson.underwrittenNOI as number || 0).toLocaleString()} reflects stabilized operations after applying market vacancy and expense normalization. ${uwJson.rationale || ""}` },
+          { field_name: "buyBoxScore", explanation_text: `Buy Box Score of ${uwJson.buyBoxScore}/100 based on ${(uwJson.keyAssumptions as string[] || []).join(", ")}.` },
+          { field_name: "recommendation", explanation_text: `Recommendation: ${String(uwJson.recommendation || "").toUpperCase()} — ${uwJson.rationale || ""}` },
+        ];
+
+        for (const ex of explanations) {
+          await db.from("ai_explanations").upsert({
+            deal_id: dealId,
+            field_name: ex.field_name,
+            explanation_text: ex.explanation_text,
+            source_document_id: null,
+          });
+        }
+
+        emit(controller, enc, { type: "log", agent: "underwriting", message: `✓ Underwritten NOI: $${(uwJson.underwrittenNOI as number || 0).toLocaleString()}` });
+        emit(controller, enc, { type: "log", agent: "underwriting", message: `✓ Recommendation: ${String(uwJson.recommendation || "").toUpperCase()}` });
+
+        // Mark complete
+        await db.from("ai_jobs").insert({ deal_id: dealId, job_type: "underwriting", status: "completed", result: uwJson });
+        await db.from("deals").update({ status: "review" }).eq("id", dealId);
+
+        emit(controller, enc, { type: "complete", stage: "review", result: uwJson });
+        controller.close();
+      } catch (err) {
+        emit(controller, enc, { type: "error", message: String(err) });
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
+  });
+}
