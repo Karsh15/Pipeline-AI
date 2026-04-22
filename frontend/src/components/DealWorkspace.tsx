@@ -48,9 +48,11 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
   // Re-fetch risks/questions/documents whenever deal changes OR status advances
   // (status change signals that an agent just wrote new rows)
   useEffect(() => {
-    supabase.from("risks").select("*").eq("deal_id", deal.id).then(({ data }) => setRisks((data ?? []) as DBRisk[]));
-    supabase.from("questions").select("*").eq("deal_id", deal.id).then(({ data }) => setQuestions((data ?? []) as DBQuestion[]));
-    supabase.from("documents").select("*").eq("deal_id", deal.id).order("uploaded_at", { ascending: false })
+    void supabase.from("risks").select("*").eq("deal_id", deal.id)
+      .then(({ data }) => setRisks((data ?? []) as DBRisk[]));
+    void supabase.from("questions").select("*").eq("deal_id", deal.id)
+      .then(({ data }) => setQuestions((data ?? []) as DBQuestion[]));
+    void supabase.from("documents").select("*").eq("deal_id", deal.id).order("uploaded_at", { ascending: false })
       .then(({ data }) => setDocuments((data ?? []) as DBDocument[]));
   }, [deal.id, deal.status]);
 
@@ -164,7 +166,9 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
                     } catch {}
                   });
                 }
-              }).catch(() => {});
+              }).catch((err: unknown) => {
+                setRunLog(p => [...p, `⚠ Underwriting error: ${err}`]);
+              });
             }
           } catch {}
         });
@@ -238,7 +242,7 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
   return (
     <div className="flex flex-col min-h-full bg-white">
       {/* ── Top bar ── */}
-      <div className="flex items-center justify-between px-8 py-4 border-b border-border bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-3 md:py-4 border-b border-border bg-white">
         <div className="flex items-center gap-4">
           <div>
             <div className="flex items-center gap-2 mb-0.5">
@@ -317,7 +321,7 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
         {(runState === "running" || deal.status === "extraction" || deal.status === "underwriting" || deal.status === "ingestion") && (
           <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
             className="overflow-hidden border-b border-border bg-slate-900">
-            <div className="p-4 max-h-48 overflow-y-auto font-mono text-[11px] text-slate-300 space-y-0.5">
+            <div className="p-4 max-h-48 overflow-y-auto scrollbar-thin font-mono text-[11px] text-slate-300 space-y-0.5">
               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700">
                 <Loader2 className="h-3 w-3 animate-spin text-primary" />
                 <span className="text-primary font-bold uppercase tracking-wider text-[10px]">
@@ -370,7 +374,7 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
       )}
 
       {/* ── Tabs ── */}
-      <div className="flex items-center gap-1 px-6 py-2 border-b border-border bg-white overflow-x-auto">
+      <div className="flex items-center gap-1 px-3 md:px-6 py-2 border-b border-border bg-white overflow-x-auto scrollbar-none flex-shrink-0">
         {tabs.map(t => {
           const Icon = t.icon;
           return (
@@ -388,7 +392,7 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
       <div className={`flex-1 ${tab === "documents" ? "overflow-hidden flex flex-col" : ""}`}>
         {/* OVERVIEW */}
         {tab === "overview" && (
-          <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="p-4 md:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
             <div className="lg:col-span-2 space-y-6">
               {/* Key metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -554,30 +558,28 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
               <CriteriaWidget dealId={deal.id} />
 
               {/* Export */}
-              {(deal.status === "review" || deal.status === "completed") && (
-                <ExportButtons dealId={deal.id} dealName={deal.name} />
-              )}
+              <ExportButtons dealId={deal.id} dealName={deal.name} />
             </div>
           </div>
         )}
 
         {/* FINANCIALS */}
         {tab === "financials" && (
-          <div className="p-8">
+          <div className="p-3 md:p-6 lg:p-8">
             <FinancialDashboard dealId={deal.id} deal={deal} refreshKey={refreshKey} />
           </div>
         )}
 
         {/* UNIT MIX */}
         {tab === "unit-mix" && (
-          <div className="p-8">
+          <div className="p-3 md:p-6 lg:p-8">
             <UnitMixTable dealId={deal.id} refreshKey={refreshKey} />
           </div>
         )}
 
         {/* DILIGENCE */}
         {tab === "diligence" && (
-          <div className="p-8 space-y-6">
+          <div className="p-4 md:p-8 space-y-6">
             {/* Risks */}
             <div className="border border-red-100 rounded-xl overflow-hidden">
               <div className="px-5 py-3 bg-red-50 border-b border-red-100 flex items-center gap-2">
@@ -700,7 +702,7 @@ export default function DealWorkspace({ deal, onClose, onUpdate }: Props) {
 
         {/* MAP */}
         {tab === "map" && (
-          <div className="h-[calc(100vh-220px)] min-h-[500px]">
+          <div className="flex-1 min-h-[400px] h-[calc(100vh-260px)]">
             <Suspense fallback={<div className="h-full bg-slate-100 animate-pulse" />}>
               <MapComponent
                 selectedDealId={deal.id}

@@ -5,14 +5,19 @@ import { supabase, type DBUnitMix } from "@/lib/supabase";
 import DetailPanel, { type PanelData, type UnitRowData } from "./DetailPanel";
 
 export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: string; refreshKey?: number }) {
-  const [rows, setRows]     = useState<DBUnitMix[]>([]);
+  const [rows, setRows]       = useState<DBUnitMix[]>([]);
   const [loading, setLoading] = useState(true);
-  const [panel, setPanel]   = useState<PanelData | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
+  const [panel, setPanel]     = useState<PanelData | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    supabase.from("unit_mix").select("*").eq("deal_id", dealId)
-      .then(({ data }) => { setRows((data ?? []) as DBUnitMix[]); setLoading(false); });
+    setLoadErr(false);
+    void supabase.from("unit_mix").select("*").eq("deal_id", dealId)
+      .then(({ data, error }) => {
+        if (error) { setLoadErr(true); } else { setRows((data ?? []) as DBUnitMix[]); }
+        setLoading(false);
+      });
   }, [dealId, refreshKey]);
 
   const fmt$ = (n: number | null | undefined) =>
@@ -76,7 +81,15 @@ export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: strin
 
   if (loading) return (
     <div className="p-6 space-y-2">
+      <div className="text-xs text-muted-foreground text-center mb-2 animate-pulse">Loading unit mix…</div>
       {[1,2,3,4].map(i=><div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse"/>)}
+    </div>
+  );
+  if (loadErr) return (
+    <div className="text-center py-12">
+      <TrendingDown className="h-8 w-8 mx-auto mb-2 text-amber-400"/>
+      <p className="text-sm font-medium text-foreground">Failed to load unit mix data</p>
+      <p className="text-xs text-muted-foreground mt-1">Check your connection and try refreshing.</p>
     </div>
   );
   if (!rows.length) return (

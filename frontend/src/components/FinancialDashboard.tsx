@@ -144,18 +144,21 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
   const [rows, setRows]       = useState<DBFinancial[]>([]);
   const [kpis, setKpis]       = useState<Record<string,number>>({});
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(false);
   const [panel, setPanel]     = useState<PanelData | null>(null);
   const [view, setView]       = useState<ViewMode>("annual");
   const [tooltip, setTooltip] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([
+    setLoadErr(false);
+    void Promise.all([
       supabase.from("financials").select("*").eq("deal_id", dealId),
       supabase.from("extracted_data").select("field_name,value")
         .eq("deal_id", dealId)
         .in("field_name", ["occupancy","adr","revpar","dscr","cap_rate","noi","expense_ratio"]),
     ]).then(([fin, kpiRes]) => {
+      if (fin.error) { setLoadErr(true); setLoading(false); return; }
       setRows((fin.data ?? []) as DBFinancial[]);
       const kpiMap: Record<string,number> = {};
       for (const r of (kpiRes.data ?? [])) kpiMap[r.field_name] = parseFloat(r.value) || 0;
@@ -252,7 +255,17 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
   };
 
   if (loading) return (
-    <div className="p-6 space-y-3">{[1,2,3,4,5].map(i=><div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse"/>)}</div>
+    <div className="p-6 space-y-3">
+      <div className="text-xs text-muted-foreground text-center mb-2 animate-pulse">Loading financial data…</div>
+      {[1,2,3,4,5].map(i=><div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse"/>)}
+    </div>
+  );
+  if (loadErr) return (
+    <div className="text-center py-12">
+      <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-400"/>
+      <p className="text-sm font-medium text-foreground">Failed to load financial data</p>
+      <p className="text-xs text-muted-foreground mt-1">Check your connection and try refreshing.</p>
+    </div>
   );
   if (!rows.length) return (
     <div className="text-center py-12 text-muted-foreground text-sm">
