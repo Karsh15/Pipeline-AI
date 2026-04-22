@@ -329,82 +329,227 @@ ${ctx}`,
 
     // ── Agent 2: Financials ───────────────────────────────────────────────────
     await runAgent("financial", async () => {
-      emit(res, { type: "log", agent: "financial", message: "Parsing T-12 financial statements..." });
-      const allText = parsedDocs.filter(d => d.bucket === "financial" || d.bucket === "om").map(d => d.text).join("\n");
+      emit(res, { type: "log", agent: "financial", message: "Parsing financial statements (T-12, P&L, rent roll, OM)..." });
 
-      const parseMoney = (s: string): number => { const v = parseFloat(s.replace(/,/g, "")); return isNaN(v) ? 0 : Math.round(v); };
+      // Use ALL doc types — financial, om, rent_roll, capex all contain financial data
+      const allText = parsedDocs
+        .filter(d => d.bucket === "financial" || d.bucket === "om" || d.bucket === "rent_roll" || d.bucket === "capex")
+        .map(d => d.text).join("\n");
+      const fullText = parsedDocs.map(d => d.text).join("\n"); // for KPI scan
+
+      const parseMoney = (s: string): number => { const v = parseFloat(s.replace(/[$,()]/g, "")); return isNaN(v) ? 0 : Math.round(v); };
+
+      // Extract numbers from a tab/space-separated line, mapping to year/month/ttm columns
       const parseDataLine = (line: string): Record<string, number> | null => {
         const parts = line.split(/\s{2,}|\t/).map(s => s.trim()).filter(Boolean);
-        const nums  = parts.slice(1).map(p => ({ raw: p, v: parseMoney(p) })).filter(x => /^-?[\d,]+\.?\d*$/.test(x.raw));
+        const nums = parts.slice(1)
+          .map(p => ({ raw: p, v: parseMoney(p) }))
+          .filter(x => /^-?[\d,]+\.?\d*$/.test(x.raw.replace(/[$()]/g, "")));
         if (!nums.length) return null;
         const result: Record<string, number> = {};
-        result.ttm = nums[nums.length - 1].v;
-        const monthNums = nums.length >= 12 ? nums.slice(0, 12) : nums.slice(0, nums.length - 1);
-        monthNums.forEach((n, i) => { result[`m${i + 1}`] = n.v; });
+
+        // Detect year headers above this line to assign y20XX columns
+        if (nums.length >= 2 && nums.length <= 6) {
+          // Likely annual columns: assign y2021..y2025 by position
+          const yearSlots = ["y2021","y2022","y2023","y2024","y2025"];
+          nums.forEach((n, i) => { if (i < yearSlots.length) result[yearSlots[i + (5 - nums.length)]] = n.v; });
+          result.ttm = nums[nums.length - 1].v;
+        } else {
+          // Monthly data: last value = TTM, first 12 = months
+          result.ttm = nums[nums.length - 1].v;
+          const monthNums = nums.length >= 13 ? nums.slice(0, 12) : nums.slice(0, nums.length - 1);
+          monthNums.forEach((n, i) => { result[`m${i + 1}`] = n.v; });
+        }
         return result;
       };
 
       type FinRow = {metric:string; category?:string; y2021?:number; y2022?:number; y2023?:number; y2024?:number; y2025?:number; ttm?:number; m1?:number; m2?:number; m3?:number; m4?:number; m5?:number; m6?:number; m7?:number; m8?:number; m9?:number; m10?:number; m11?:number; m12?:number};
+
+      // Expanded label map — covers hotel, multifamily, mixed-use CRE P&Ls
       const LABEL_MAP: Record<string, { metric: string; category: "income"|"expense" }> = {
-        "total room revenue":{ metric:"Total Room Revenue",category:"income" },"total operating revenue":{ metric:"Total Revenue",category:"income" },"total revenue":{ metric:"Total Revenue",category:"income" },"gross operating profit":{ metric:"Gross Operating Profit",category:"income" },"ebitda":{ metric:"EBITDA",category:"income" },"net income":{ metric:"Net Income",category:"income" },"gross potential rent":{ metric:"Gross Potential Rent",category:"income" },"effective gross income":{ metric:"Effective Gross Income",category:"income" },"net operating income":{ metric:"Net Operating Income",category:"income" },"total rooms expenses":{ metric:"Total Rooms Expenses",category:"expense" },"rooms expenses":{ metric:"Rooms Expenses",category:"expense" },"total departmental expenses":{ metric:"Total Departmental Expenses",category:"expense" },"administration & general":{ metric:"Administration & General",category:"expense" },"sales & marketing":{ metric:"Sales & Marketing",category:"expense" },"property operations & maintenance":{ metric:"Property Operations & Maintenance",category:"expense" },"utilities":{ metric:"Utilities",category:"expense" },"total undistributed expenses":{ metric:"Total Undistributed Expenses",category:"expense" },"total expenses":{ metric:"Total Expenses",category:"expense" },"management fees":{ metric:"Management Fees",category:"expense" },"total operating expenses":{ metric:"Total Operating Expenses",category:"expense" },"vacancy & concessions":{ metric:"Vacancy & Concessions",category:"expense" },"depreciation & amortization":{ metric:"Depreciation & Amortization",category:"expense" },
+        // ── Revenue / Income ──
+        "rooms revenue":                    { metric:"Rooms Revenue",                   category:"income" },
+        "room revenue":                     { metric:"Rooms Revenue",                   category:"income" },
+        "total room revenue":               { metric:"Rooms Revenue",                   category:"income" },
+        "rooms":                            { metric:"Rooms Revenue",                   category:"income" },
+        "food & beverage":                  { metric:"Food & Beverage Revenue",         category:"income" },
+        "food and beverage":                { metric:"Food & Beverage Revenue",         category:"income" },
+        "f&b revenue":                      { metric:"Food & Beverage Revenue",         category:"income" },
+        "other operated departments":       { metric:"Other Operated Departments",      category:"income" },
+        "other revenue":                    { metric:"Other Revenue",                   category:"income" },
+        "miscellaneous income":             { metric:"Miscellaneous Income",            category:"income" },
+        "parking income":                   { metric:"Parking Income",                  category:"income" },
+        "laundry income":                   { metric:"Laundry Income",                  category:"income" },
+        "late fees":                        { metric:"Late Fees",                       category:"income" },
+        "rental income":                    { metric:"Rental Income",                   category:"income" },
+        "total rental income":              { metric:"Rental Income",                   category:"income" },
+        "gross potential rent":             { metric:"Gross Potential Rent",            category:"income" },
+        "scheduled base rent":              { metric:"Gross Potential Rent",            category:"income" },
+        "gross scheduled income":           { metric:"Gross Potential Rent",            category:"income" },
+        "effective gross income":           { metric:"Effective Gross Income",          category:"income" },
+        "egi":                              { metric:"Effective Gross Income",          category:"income" },
+        "total revenues":                   { metric:"Total Revenue",                   category:"income" },
+        "total revenue":                    { metric:"Total Revenue",                   category:"income" },
+        "total operating revenue":          { metric:"Total Revenue",                   category:"income" },
+        "net operating income":             { metric:"Net Operating Income",            category:"income" },
+        "noi":                              { metric:"Net Operating Income",            category:"income" },
+        "gross operating profit":           { metric:"Gross Operating Profit",          category:"income" },
+        "gop":                              { metric:"Gross Operating Profit",          category:"income" },
+        "ebitda":                           { metric:"EBITDA",                          category:"income" },
+        "ebitdar":                          { metric:"EBITDAR",                         category:"income" },
+        "net income":                       { metric:"Net Income",                      category:"income" },
+        "net income (loss)":                { metric:"Net Income",                      category:"income" },
+        "adr":                              { metric:"ADR",                             category:"income" },
+        "average daily rate":               { metric:"ADR",                             category:"income" },
+        "revpar":                           { metric:"RevPAR",                          category:"income" },
+        "revenue per available room":       { metric:"RevPAR",                          category:"income" },
+        "occupancy":                        { metric:"Occupancy %",                     category:"income" },
+        "occupancy %":                      { metric:"Occupancy %",                     category:"income" },
+        "% occupancy":                      { metric:"Occupancy %",                     category:"income" },
+        // ── Expenses ──
+        "rooms expense":                    { metric:"Rooms Expense",                   category:"expense" },
+        "rooms expenses":                   { metric:"Rooms Expense",                   category:"expense" },
+        "total rooms expense":              { metric:"Rooms Expense",                   category:"expense" },
+        "food & beverage expense":          { metric:"F&B Expense",                     category:"expense" },
+        "total departmental expenses":      { metric:"Total Departmental Expenses",     category:"expense" },
+        "administrative & general":         { metric:"Administrative & General",        category:"expense" },
+        "administration & general":         { metric:"Administrative & General",        category:"expense" },
+        "a&g":                              { metric:"Administrative & General",        category:"expense" },
+        "sales & marketing":                { metric:"Sales & Marketing",               category:"expense" },
+        "sales and marketing":              { metric:"Sales & Marketing",               category:"expense" },
+        "property operations & maintenance":{ metric:"Property Operations & Maintenance",category:"expense" },
+        "property operations and maintenance":{ metric:"Property Operations & Maintenance",category:"expense" },
+        "repairs & maintenance":            { metric:"Repairs & Maintenance",           category:"expense" },
+        "repairs and maintenance":          { metric:"Repairs & Maintenance",           category:"expense" },
+        "utilities":                        { metric:"Utilities",                       category:"expense" },
+        "energy":                           { metric:"Utilities",                       category:"expense" },
+        "insurance":                        { metric:"Insurance",                       category:"expense" },
+        "property insurance":               { metric:"Insurance",                       category:"expense" },
+        "real estate taxes":                { metric:"Real Estate Taxes",               category:"expense" },
+        "property taxes":                   { metric:"Real Estate Taxes",               category:"expense" },
+        "taxes":                            { metric:"Real Estate Taxes",               category:"expense" },
+        "management fees":                  { metric:"Management Fees",                 category:"expense" },
+        "management fee":                   { metric:"Management Fees",                 category:"expense" },
+        "franchise fees":                   { metric:"Franchise Fees",                  category:"expense" },
+        "franchise fee":                    { metric:"Franchise Fees",                  category:"expense" },
+        "royalty fees":                     { metric:"Franchise Fees",                  category:"expense" },
+        "reserve for replacement":          { metric:"Reserve for Replacement",         category:"expense" },
+        "ff&e reserve":                     { metric:"Reserve for Replacement",         category:"expense" },
+        "capital reserves":                 { metric:"Reserve for Replacement",         category:"expense" },
+        "total undistributed expenses":     { metric:"Total Undistributed Expenses",    category:"expense" },
+        "total fixed charges":              { metric:"Total Fixed Charges",             category:"expense" },
+        "total operating expenses":         { metric:"Total Operating Expenses",        category:"expense" },
+        "total expenses":                   { metric:"Total Expenses",                  category:"expense" },
+        "vacancy & credit loss":            { metric:"Vacancy & Credit Loss",           category:"expense" },
+        "vacancy & concessions":            { metric:"Vacancy & Credit Loss",           category:"expense" },
+        "vacancy loss":                     { metric:"Vacancy & Credit Loss",           category:"expense" },
+        "bad debt":                         { metric:"Bad Debt",                        category:"expense" },
+        "depreciation & amortization":      { metric:"Depreciation & Amortization",     category:"expense" },
+        "depreciation and amortization":    { metric:"Depreciation & Amortization",     category:"expense" },
+        "debt service":                     { metric:"Debt Service",                    category:"expense" },
+        "interest expense":                 { metric:"Interest Expense",               category:"expense" },
+        "payroll":                          { metric:"Payroll",                         category:"expense" },
+        "total labor":                      { metric:"Payroll",                         category:"expense" },
+        "payroll & related":                { metric:"Payroll",                         category:"expense" },
+        "landscaping":                      { metric:"Landscaping",                     category:"expense" },
+        "cleaning":                         { metric:"Cleaning",                        category:"expense" },
+        "trash removal":                    { metric:"Trash Removal",                   category:"expense" },
+        "administrative":                   { metric:"Administrative",                  category:"expense" },
+        "general & administrative":         { metric:"Administrative & General",        category:"expense" },
+        "legal & professional":             { metric:"Legal & Professional",            category:"expense" },
+        "accounting":                       { metric:"Accounting",                      category:"expense" },
       };
 
       const regexRows: FinRow[] = [];
       const seen = new Set<string>();
       for (const line of allText.split("\n")) {
         const trimmed = line.trim();
-        if (!trimmed) continue;
+        if (!trimmed || trimmed.length < 5) continue;
         const labelRaw = trimmed.split(/\s{2,}|\t/)[0].trim().toLowerCase().replace(/\s+/g, " ");
         const mapped = LABEL_MAP[labelRaw];
         if (!mapped || seen.has(mapped.metric)) continue;
         const nums = parseDataLine(trimmed);
-        if (!nums?.ttm) continue;
+        if (!nums || !Object.values(nums).some(v => v !== 0)) continue;
         seen.add(mapped.metric);
         regexRows.push({ metric: mapped.metric, category: mapped.category, ...nums });
       }
 
-      const parseKpiLine = (pattern: RegExp): number => { const m = allText.match(pattern); return m ? parseFloat(m[1].replace(/,/g,"")) || 0 : 0; };
-      const kpiOccupancy = parseKpiLine(/%Occupancy%[^\n]*?([\d.]+)\s*$/m) || parseKpiLine(/\bOccupancy\b[^\n]*?([\d.]+)%/i);
-      const kpiADR       = parseKpiLine(/\bADR\b[^\n]*?([\d,]+\.?\d*)\s*$/m);
-      const kpiRevPAR    = parseKpiLine(/\bRevPAR\b[^\n]*?([\d,]+\.?\d*)\s*$/m);
-      const kpiRevenue   = parseKpiLine(/Total Operating Revenue[^\n]*?([\d,]+\.?\d*)\s*$/m) || parseKpiLine(/Total Revenue[^\n]*?([\d,]+\.?\d*)\s*$/m);
-      const kpiGOP       = parseKpiLine(/Gross Operating Profit[^\n]*?([-\d,]+\.?\d*)\s*$/m);
-      const kpiEBITDA    = parseKpiLine(/\bEBITDA\b[^\n]*?([-\d,]+\.?\d*)\s*$/m);
-      const kpiCapRate   = parseKpiLine(/\bcap\s*rate\b[^\n]*?([\d.]+)%/i);
+      // KPI extraction — scan all docs for key ratios
+      const kpi = (pattern: RegExp, src = fullText): number => {
+        const m = src.match(pattern);
+        return m ? parseFloat(m[1].replace(/,/g, "")) || 0 : 0;
+      };
+      const kpiOccupancy = kpi(/\bOccupancy\b[^\n]*?([\d.]+)\s*%/i) || kpi(/%\s*Occupancy[^\n]*?([\d.]+)\s*$/m);
+      const kpiADR       = kpi(/\bADR\b[^\n]*?\$?\s*([\d,]+\.?\d*)/i);
+      const kpiRevPAR    = kpi(/\bRevPAR\b[^\n]*?\$?\s*([\d,]+\.?\d*)/i);
+      const kpiRevenue   = kpi(/Total (?:Operating )?Revenue[^\n]*?([\d,]+\.?\d*)\s*$/m);
+      const kpiNOI       = kpi(/Net Operating Income[^\n]*?([\d,]+\.?\d*)\s*$/m) || kpi(/\bNOI\b[^\n]*?([\d,]+\.?\d*)\s*$/m);
+      const kpiGOP       = kpi(/Gross Operating Profit[^\n]*?([-\d,]+\.?\d*)\s*$/m);
+      const kpiEBITDA    = kpi(/\bEBITDA\b[^\n]*?([-\d,]+\.?\d*)\s*$/m);
+      const kpiCapRate   = kpi(/cap\s*rate[^\n]*?([\d.]+)\s*%/i);
+      const kpiDSCR      = kpi(/\bDSCR\b[^\n]*?([\d.]+)/i) || kpi(/debt\s+service\s+coverage[^\n]*?([\d.]+)/i);
+      const kpiExpRatio  = kpi(/expense\s*ratio[^\n]*?([\d.]+)\s*%/i);
 
-      emit(res, { type: "log", agent: "financial", message: `  ↳ regex: ${regexRows.length} rows · occ=${kpiOccupancy}% ADR=$${kpiADR} RevPAR=$${kpiRevPAR}` });
+      emit(res, { type: "log", agent: "financial", message: `  ↳ regex: ${regexRows.length} rows · NOI=$${kpiNOI||kpiGOP} · occ=${kpiOccupancy}% · ADR=$${kpiADR} · RevPAR=$${kpiRevPAR}` });
 
+      // LLM gap-fill — only if regex found fewer than 10 rows (token-efficient: 6000 char cap)
       let llmRows: FinRow[] = [];
-      if (regexRows.length < 8) {
-        emit(res, { type: "log", agent: "financial", message: `  ↳ regex underperformed (${regexRows.length} rows) — LLM fallback...` });
-        const ctxSlice = allText.slice(0, 4000);
+      const missingCritical = !regexRows.some(r => /total revenue|effective gross|noi|gop|ebitda/i.test(r.metric));
+      if (regexRows.length < 10 || missingCritical) {
+        emit(res, { type: "log", agent: "financial", message: `  ↳ LLM gap-fill (${regexRows.length} regex rows, missing=${missingCritical})...` });
+        // Prioritize financial docs, cap at 6000 chars to stay well under token limit
+        const finText = parsedDocs.filter(d => d.bucket === "financial").map(d => d.text).join("\n").slice(0, 4000);
+        const omText  = parsedDocs.filter(d => d.bucket === "om").map(d => d.text).join("\n").slice(0, 2000);
+        const ctxSlice = (finText + "\n" + omText).slice(0, 6000);
         try {
-          const raw = await chat({ agent: "financial", model: MODELS.STANDARD, max_tokens: 900, temperature: 0.0, messages: [{ role: "system", content: "Extract hotel P&L rows. Raw JSON only. Integers only. Omit zero fields. Last column=ttm." }, { role: "user", content: `Return: {"financials":[{"metric":"","category":"income","ttm":0,"m1":0}]}\nDOCUMENTS:\n${ctxSlice}` }] });
+          const raw = await chat({
+            agent: "financial", model: MODELS.STANDARD, max_tokens: 1200, temperature: 0.0,
+            messages: [{
+              role: "system",
+              content: "CRE financial analyst. Extract P&L line items from documents. Raw JSON only. Integers only (no decimals except pct). Omit fields that are 0. category must be 'income' or 'expense'.",
+            }, {
+              role: "user",
+              content: `Extract ALL financial line items. Include: revenues, expenses, NOI, EBITDA, ADR, RevPAR, occupancy%, cap rate, DSCR.
+Return JSON: {"financials":[{"metric":"","category":"income","y2021":0,"y2022":0,"y2023":0,"y2024":0,"ttm":0}],"kpis":{"occupancy":0,"adr":0,"revpar":0,"capRate":0,"dscr":0,"expenseRatio":0}}
+
+DOCUMENTS:
+${ctxSlice}`,
+            }],
+          });
           debugReply("financial", raw);
-          llmRows = safeParse<{ financials?: FinRow[] }>(raw, {}).financials || [];
-        } catch (err) { console.error("[financial] LLM fallback failed:", err); }
+          const parsed = safeParse<{ financials?: FinRow[]; kpis?: Record<string,number> }>(raw, {});
+          llmRows = parsed.financials || [];
+          // Supplement KPIs from LLM if regex missed them
+          const lk = parsed.kpis || {};
+          if (!kpiOccupancy && lk.occupancy) Object.assign(lk, { _occ: lk.occupancy });
+          if (!kpiADR && lk.adr) Object.assign(lk, { _adr: lk.adr });
+        } catch (err) { console.error("[financial] LLM gap-fill failed:", err); }
       }
 
+      // Merge: regex wins over LLM for same metric
       const mergedMap = new Map<string, FinRow>();
       for (const r of [...regexRows, ...llmRows]) {
         const key = r.metric.toLowerCase();
         if (!mergedMap.has(key)) mergedMap.set(key, r);
       }
 
-      const noi     = kpiGOP || kpiEBITDA || 0;
+      // Persist KPIs to deals table
+      const noiVal   = kpiNOI || kpiGOP || kpiEBITDA || 0;
       const dealUpd: Record<string, number> = {};
-      if (noi)          dealUpd.noi      = noi;
+      if (noiVal)       dealUpd.noi      = noiVal;
       if (kpiCapRate)   dealUpd.cap_rate = kpiCapRate;
-      if (!kpiCapRate && noi) {
+      if (kpiDSCR)      dealUpd.dscr     = kpiDSCR;
+      if (kpiOccupancy) dealUpd.occupancy_rate = kpiOccupancy;
+      if (!kpiCapRate && noiVal) {
         const { data: dealRow } = await db.from("deals").select("guidance_price").eq("id", dealId).single();
         const gp = (dealRow as { guidance_price?: number } | null)?.guidance_price;
-        if (gp && gp > 0) dealUpd.cap_rate = parseFloat(((noi / gp) * 100).toFixed(2));
+        if (gp && gp > 0) dealUpd.cap_rate = parseFloat(((noiVal / gp) * 100).toFixed(2));
       }
       if (Object.keys(dealUpd).length) await db.from("deals").update(dealUpd).eq("id", dealId);
 
       const { data: dealInfo } = await db.from("deals").select("units").eq("id", dealId).single();
       const totalUnits = (dealInfo as { units?: number } | null)?.units || 0;
-      const egiRow = Array.from(mergedMap.values()).find(r => /effective gross income|egi|total revenue|total operating revenue/i.test(r.metric));
+      const egiRow = Array.from(mergedMap.values()).find(r => /effective gross income|egi|total revenue/i.test(r.metric));
       const egiTTM = egiRow ? (egiRow.ttm || 0) : (kpiRevenue || 0);
 
       const rows = Array.from(mergedMap.values())
@@ -413,19 +558,32 @@ ${ctx}`,
           const monthlySum = [r.m1,r.m2,r.m3,r.m4,r.m5,r.m6,r.m7,r.m8,r.m9,r.m10,r.m11,r.m12].reduce((s: number, v) => s + (v || 0), 0);
           const ttmVal = r.ttm || monthlySum || r.y2025 || r.y2024 || r.y2023 || r.y2022 || r.y2021 || 0;
           const perUnit = totalUnits > 0 && ttmVal ? Math.round(ttmVal / totalUnits) : 0;
-          const pctEgi  = egiTTM > 0 && ttmVal ? parseFloat(((ttmVal / egiTTM) * 100).toFixed(1)) : 0;
+          const pctEgi  = egiTTM > 0 && ttmVal && r.category === "expense" ? parseFloat(((ttmVal / egiTTM) * 100).toFixed(1)) : 0;
           return {
             deal_id: dealId, category: (r.category === "expense" ? "expense" : "income") as "income"|"expense",
-            sub_category: r.metric, y2021: r.y2021||0, y2022: r.y2022||0, y2023: r.y2023||0, y2024: r.y2024||0, y2025: r.y2025||0, ttm: ttmVal,
-            m1: r.m1||0, m2: r.m2||0, m3: r.m3||0, m4: r.m4||0, m5: r.m5||0, m6: r.m6||0,
-            m7: r.m7||0, m8: r.m8||0, m9: r.m9||0, m10: r.m10||0, m11: r.m11||0, m12: r.m12||0,
+            sub_category: r.metric,
+            y2021: r.y2021||0, y2022: r.y2022||0, y2023: r.y2023||0, y2024: r.y2024||0, y2025: r.y2025||0,
+            ttm: ttmVal,
+            m1: r.m1||0, m2: r.m2||0, m3: r.m3||0, m4: r.m4||0,
+            m5: r.m5||0, m6: r.m6||0, m7: r.m7||0, m8: r.m8||0,
+            m9: r.m9||0, m10: r.m10||0, m11: r.m11||0, m12: r.m12||0,
             per_unit: perUnit, pct_egi: pctEgi,
           };
         });
 
+      // Also save KPI rows (ADR, RevPAR, Occupancy%) as income rows for display
+      const kpiRows: typeof rows = [];
+      if (kpiADR    && !mergedMap.has("adr"))        kpiRows.push({ deal_id:dealId, category:"income", sub_category:"ADR",        y2021:0,y2022:0,y2023:0,y2024:0,y2025:0, ttm:kpiADR,    m1:0,m2:0,m3:0,m4:0,m5:0,m6:0,m7:0,m8:0,m9:0,m10:0,m11:0,m12:0, per_unit:0, pct_egi:0 });
+      if (kpiRevPAR && !mergedMap.has("revpar"))     kpiRows.push({ deal_id:dealId, category:"income", sub_category:"RevPAR",     y2021:0,y2022:0,y2023:0,y2024:0,y2025:0, ttm:kpiRevPAR, m1:0,m2:0,m3:0,m4:0,m5:0,m6:0,m7:0,m8:0,m9:0,m10:0,m11:0,m12:0, per_unit:0, pct_egi:0 });
+      if (kpiExpRatio)                               kpiRows.push({ deal_id:dealId, category:"expense",sub_category:"Expense Ratio %", y2021:0,y2022:0,y2023:0,y2024:0,y2025:0, ttm:kpiExpRatio,m1:0,m2:0,m3:0,m4:0,m5:0,m6:0,m7:0,m8:0,m9:0,m10:0,m11:0,m12:0, per_unit:0, pct_egi:0 });
+
+      const allRows = [...rows, ...kpiRows];
       await db.from("financials").delete().eq("deal_id", dealId);
-      if (rows.length) await db.from("financials").insert(rows);
-      return { summary: `NOI $${(noi||0).toLocaleString()} · Cap ${kpiCapRate||0}% · Rev $${(kpiRevenue||0).toLocaleString()} · ${rows.length} line items` };
+      if (allRows.length) await db.from("financials").insert(allRows);
+
+      const incomeRows  = allRows.filter(r => r.category === "income").length;
+      const expenseRows = allRows.filter(r => r.category === "expense").length;
+      return { summary: `NOI $${(noiVal).toLocaleString()} · Cap ${kpiCapRate||dealUpd.cap_rate||0}% · DSCR ${kpiDSCR||0} · ${incomeRows} income + ${expenseRows} expense rows` };
     });
 
     // ── Agent 2b: Unit Mix ────────────────────────────────────────────────────
