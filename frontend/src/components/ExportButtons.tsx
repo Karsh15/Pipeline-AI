@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { FileSpreadsheet, Presentation, Loader2, CheckCircle2, Download } from "lucide-react";
-import { exportExcel, exportPPT } from "@/lib/pipeline";
+import { FileSpreadsheet, Presentation, Loader2, CheckCircle2, Download, FileText } from "lucide-react";
+import { exportExcel, exportPPT, exportUnderwritingPdf } from "@/lib/pipeline";
 
 export default function ExportButtons({ dealId, dealName }: { dealId: string; dealName: string }) {
   const [xlsxState, setXlsxState] = useState<"idle" | "loading" | "done">("idle");
   const [pptState,  setPptState]  = useState<"idle" | "loading" | "done">("idle");
+  const [pdfState,  setPdfState]  = useState<"idle" | "loading" | "done">("idle");
 
   const handleExcel = async () => {
     setXlsxState("loading");
@@ -21,6 +22,13 @@ export default function ExportButtons({ dealId, dealName }: { dealId: string; de
     await exportPPT(dealId);
     setPptState("done");
     setTimeout(() => setPptState("idle"), 2500);
+  };
+
+  const handlePdf = async () => {
+    setPdfState("loading");
+    await exportUnderwritingPdf(dealId);
+    setPdfState("done");
+    setTimeout(() => setPdfState("idle"), 2500);
   };
 
   return (
@@ -63,6 +71,22 @@ export default function ExportButtons({ dealId, dealName }: { dealId: string; de
           {pptState === "loading" ? "Generating..." : pptState === "done" ? "Downloaded!" : "PowerPoint"}
         </motion.button>
       </div>
+      <motion.button
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.98 }}
+        onClick={handlePdf}
+        disabled={pdfState === "loading"}
+        className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all border
+          ${pdfState === "done"
+            ? "bg-emerald-500 text-white border-emerald-500"
+            : "bg-[#0A1628] text-white border-[#0A1628] hover:bg-[#1E3A5F]"
+          } disabled:opacity-60`}
+      >
+        {pdfState === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> :
+         pdfState === "done"    ? <CheckCircle2 className="h-4 w-4" /> :
+                                  <FileText className="h-4 w-4" />}
+        {pdfState === "loading" ? "Generating PDF..." : pdfState === "done" ? "Downloaded!" : "Underwriting PDF"}
+      </motion.button>
       <p className="text-[10px] text-muted-foreground text-center">
         Generates from live AI-extracted deal data
       </p>

@@ -6,6 +6,7 @@ import multer from "multer";
 import { chatHandler } from "./routes/chat";
 import { exportExcelHandler } from "./routes/export-excel";
 import { exportPptHandler } from "./routes/export-ppt";
+import { exportUnderwritingPdfHandler } from "./routes/export-underwriting-pdf";
 import { processDocumentsHandler } from "./routes/process-documents";
 import { runExtractionHandler } from "./routes/run-extraction";
 import { runUnderwritingHandler } from "./routes/run-underwriting";
@@ -34,8 +35,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 
 // Dual-mount: /api/... (dev) and /... (production via Passenger strip)
 const routes = (r: express.Router) => {
   r.post("/chat",              chatHandler);
-  r.post("/export-excel",      exportExcelHandler);
-  r.post("/export-ppt",        exportPptHandler);
+  r.post("/export-excel",           exportExcelHandler);
+  r.post("/export-ppt",             exportPptHandler);
+  r.post("/export-underwriting-pdf", exportUnderwritingPdfHandler);
   r.post("/process-documents", upload.single("file"), processDocumentsHandler);
   r.post("/run-extraction",    runExtractionHandler);
   r.post("/run-underwriting",  runUnderwritingHandler);

@@ -588,66 +588,165 @@ ${ctxSlice}`,
 
     // ── Agent 2b: Unit Mix ────────────────────────────────────────────────────
     await runAgent("unit_mix", async () => {
-      const umText = parsedDocs.filter(d => d.bucket === "rent_roll" || d.bucket === "om").map(d => d.text).join("\n");
-      const parseMoney2 = (s: string) => parseFloat(s.replace(/[,$]/g,"")) || 0;
+      // Use rent_roll primary, om secondary — cap at 8000 chars total to save tokens
+      const rrText = parsedDocs.filter(d => d.bucket === "rent_roll").map(d => d.text).join("\n").slice(0, 5500);
+      const omText = parsedDocs.filter(d => d.bucket === "om").map(d => d.text).join("\n").slice(0, 2500);
+      const umText = (rrText + "\n" + omText).trim();
 
-      type UMRow = { unitType:string; totalUnits:number; vacantUnits:number; avgSqft?:number; avgBaseRent?:number; avgTotalRent?:number; avgRent?:number; marketRent?:number; avgUtilities?:number; latestLeaseUp?:string; physicalOcc?:number };
+      const pm = (s: string) => parseFloat(s.replace(/[$,\s]/g, "")) || 0;
+
+      type UMRow = {
+        unitType: string; totalUnits: number; vacantUnits: number;
+        avgSqft?: number; avgBaseRent?: number; avgTotalRent?: number;
+        avgRent?: number; marketRent?: number; avgUtilities?: number;
+        latestLeaseUp?: string; physicalOcc?: number;
+        rentPerSqft?: number; monthlyRevenue?: number;
+      };
+
       const regexRows: UMRow[] = [];
       const seenTypes = new Set<string>();
 
       for (const line of umText.split("\n")) {
         const t = line.trim();
-        if (!t || t.length < 8) continue;
-        const hm = t.match(/^(.{4,40}?)\s{2,}(\d{1,4})\s+(\d{1,3})\s+([\d.]+)\s*([\d.]*)/);
-        if (hm) {
-          const label  = hm[1].trim();
-          const total  = parseInt(hm[2]);
-          const vacant = parseInt(hm[3]);
-          const rate1  = parseMoney2(hm[4]);
-          const rate2  = parseMoney2(hm[5] || "0");
-          if (total >= 1 && total <= 2000 && rate1 > 0 && !seenTypes.has(label.toLowerCase())) {
-            const isHotel = /king|queen|double|twin|suite|ada|standard|deluxe|premium/i.test(label);
-            const isMF    = /studio|\d\s*br|bed|bath|efficiency|commercial/i.test(label);
-            if (isHotel || isMF) {
-              seenTypes.add(label.toLowerCase());
-              regexRows.push({ unitType: label, totalUnits: total, vacantUnits: vacant, avgBaseRent: isHotel ? rate1 : 0, avgTotalRent: isHotel ? (rate2||rate1) : 0 });
-            }
+        if (!t || t.length < 6) continue;
+
+        // Pattern 1: "Type  total  vacant  sqft  baseRent  marketRent"
+        const p1 = t.match(/^(.{3,40}?)\s{2,}(\d{1,4})\s+(\d{1,3})\s+([\d,]+\.?\d*)\s*([\d,]+\.?\d*)?\s*([\d,]+\.?\d*)?/);
+        if (p1) {
+          const label  = p1[1].trim();
+          const total  = parseInt(p1[2]);
+          const vacant = parseInt(p1[3]);
+          const n1 = pm(p1[4]);
+          const n2 = pm(p1[5] || "0");
+          const n3 = pm(p1[6] || "0");
+          const key = label.toLowerCase();
+
+          const isHotel = /king|queen|double|twin|suite|ada|standard|deluxe|premium|accessible|handicap/i.test(label);
+          const isMF    = /studio|\d[\s/-]*(?:br|bd|bed|bdrm)|bed|bath|efficiency|loft|townhome|penthouse/i.test(label);
+          const isGeneric = total >= 1 && total <= 2000 && n1 > 0;
+
+          if ((isHotel || isMF || isGeneric) && !seenTypes.has(key)) {
+            seenTypes.add(key);
+            // Heuristic: if n1 looks like sqft (>200), treat as sqft; else rent
+            const looksLikeSqft = n1 > 200 && n1 < 5000;
+            regexRows.push({
+              unitType:     label,
+              totalUnits:   total,
+              vacantUnits:  vacant,
+              avgSqft:      looksLikeSqft ? n1 : 0,
+              avgBaseRent:  looksLikeSqft ? n2 : n1,
+              marketRent:   looksLikeSqft ? n3 : n2,
+            });
           }
+        }
+
+        // Pattern 2: occupancy line "Type: X% occupied / Y vacant"
+        const p2 = t.match(/^(.{3,40}?)[:\s]+(\d{1,3}\.?\d*)\s*%\s*(?:occ|occupied)/i);
+        if (p2) {
+          const label = p2[1].trim();
+          const key   = label.toLowerCase();
+          const existing = regexRows.find(r => r.unitType.toLowerCase() === key);
+          if (existing) existing.physicalOcc = parseFloat(p2[2]);
+        }
+
+        // Pattern 3: market rent line "Type  $X market"
+        const p3 = t.match(/^(.{3,40}?)\s+\$?([\d,]+)\s+(?:market|mkt)/i);
+        if (p3) {
+          const label = p3[1].trim().toLowerCase();
+          const existing = regexRows.find(r => r.unitType.toLowerCase() === label);
+          if (existing) existing.marketRent = pm(p3[2]);
         }
       }
 
+      // Also scan for sqft hints: "800 SF" or "800 sq ft" after a unit type
+      for (const row of regexRows) {
+        if (!row.avgSqft) {
+          const sfMatch = umText.match(new RegExp(`${row.unitType.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}[^\\n]*?(\\d{3,4})\\s*(?:sf|sq\\.?\\s*ft)`, "i"));
+          if (sfMatch) row.avgSqft = parseInt(sfMatch[1]);
+        }
+      }
+
+      // LLM gap-fill — only if regex got < 2 rows; use LIGHT model + 5000 char cap
       let llmRows: UMRow[] = [];
-      if (!regexRows.length) {
+      if (regexRows.length < 2 && umText.length > 50) {
+        emit(res, { type: "log", agent: "unit_mix", message: `  ↳ LLM gap-fill (${regexRows.length} regex rows)...` });
         try {
-          const raw = await chat({ agent: "unit_mix", model: MODELS.STANDARD, max_tokens: 800, temperature: 0.0, messages: [{ role: "system", content: "CRE analyst. Extract unit/room mix. Raw JSON only." }, { role: "user", content: `Extract every distinct unit/room type. Return JSON:\n{"unitMix":[{"unitType":"","totalUnits":0,"vacantUnits":0,"avgBaseRent":0,"avgRent":0,"marketRent":0}]}\n\nDOCUMENTS:\n${umText.slice(0,5000)}` }] });
+          const raw = await chat({
+            agent: "unit_mix", model: MODELS.LIGHT, max_tokens: 600, temperature: 0.0,
+            messages: [{
+              role: "system",
+              content: "CRE analyst. Extract unit/room mix table. Raw JSON only. Integers only. Omit zero fields.",
+            }, {
+              role: "user",
+              content: `Extract every distinct unit/room type from the rent roll or OM.
+Return JSON: {"unitMix":[{"unitType":"","totalUnits":0,"vacantUnits":0,"avgSqft":0,"avgBaseRent":0,"marketRent":0,"avgUtilities":0}]}
+
+DOCUMENTS:
+${umText.slice(0, 5000)}`,
+            }],
+          });
           debugReply("unit_mix", raw);
           llmRows = safeParse<{ unitMix?: UMRow[] }>(raw, {}).unitMix || [];
         } catch (err) { console.error("[unit_mix] LLM failed:", err); }
       }
 
-      const merged: UMRow[] = regexRows.length ? regexRows : llmRows;
-      let rows = merged.filter(u => u.unitType && (u.totalUnits||0) > 0).map(u => {
-        const base  = u.avgBaseRent  || 0;
-        const total = u.avgTotalRent || u.avgRent || base;
-        const units = u.totalUnits   || 0;
-        const vacant = u.vacantUnits || 0;
-        const physOcc = u.physicalOcc ?? (units > 0 ? parseFloat((((units - vacant) / units) * 100).toFixed(1)) : 0);
-        return { deal_id: dealId, unit_type: u.unitType, total_units: units, vacant_units: vacant, avg_sqft: u.avgSqft||0, avg_base_rent: base, avg_total_rent: total, avg_rent: total||base, latest_lease_up: u.latestLeaseUp||null, avg_utilities: u.avgUtilities||0, market_rent: u.marketRent||0, annual_revenue: total > 0 ? Math.round(total * units * 12) : 0, loss_to_lease: (u.marketRent||0) > 0 && base > 0 ? parseFloat(((u.marketRent||0) - base).toFixed(2)) : 0, physical_occ: physOcc };
+      const merged: UMRow[] = regexRows.length >= 2 ? regexRows : (llmRows.length ? llmRows : regexRows);
+
+      let rows = merged.filter(u => u.unitType && (u.totalUnits || 0) > 0).map(u => {
+        const base    = u.avgBaseRent  || 0;
+        const total   = u.avgTotalRent || u.avgRent || base;
+        const units   = u.totalUnits   || 0;
+        const vacant  = u.vacantUnits  || 0;
+        const physOcc = u.physicalOcc  ?? (units > 0 ? parseFloat((((units - vacant) / units) * 100).toFixed(1)) : 0);
+        const sqft    = u.avgSqft      || 0;
+        const mktRent = u.marketRent   || 0;
+        const annRev  = total > 0 ? Math.round(total * units * 12) : 0;
+        const ltl     = mktRent > 0 && base > 0 ? parseFloat((mktRent - base).toFixed(2)) : 0;
+        const rpsf    = sqft > 0 && base > 0 ? parseFloat((base / sqft).toFixed(2)) : 0;
+        return {
+          deal_id:        dealId,
+          unit_type:      u.unitType,
+          total_units:    units,
+          vacant_units:   vacant,
+          avg_sqft:       sqft,
+          avg_base_rent:  base,
+          avg_total_rent: total,
+          avg_rent:       total || base,
+          latest_lease_up: u.latestLeaseUp || null,
+          avg_utilities:  u.avgUtilities || 0,
+          market_rent:    mktRent,
+          annual_revenue: annRev,
+          loss_to_lease:  ltl,
+          physical_occ:   physOcc,
+          // store rent/sqft in avg_utilities slot if no utilities data — frontend reads it
+          ...(rpsf > 0 && !u.avgUtilities ? { avg_utilities: rpsf } : {}),
+        };
       });
 
+      // Fallback: use deal metadata
       if (!rows.length) {
         const { data: dealRow } = await db.from("deals").select("units,property_type,occupancy_rate").eq("id", dealId).single();
         if (dealRow?.units && dealRow.units > 0) {
-          rows = [{ deal_id: dealId, unit_type: /hotel|hospitality/i.test(dealRow.property_type||"") ? "Guest Rooms" : "Units", total_units: dealRow.units, vacant_units: 0, avg_sqft: 0, avg_base_rent: 0, avg_total_rent: 0, avg_rent: 0, latest_lease_up: null, avg_utilities: 0, market_rent: 0, annual_revenue: 0, loss_to_lease: 0, physical_occ: dealRow.occupancy_rate || 0 }];
+          rows = [{
+            deal_id: dealId,
+            unit_type: /hotel|hospitality/i.test(dealRow.property_type || "") ? "Guest Rooms" : "Units",
+            total_units: dealRow.units, vacant_units: 0,
+            avg_sqft: 0, avg_base_rent: 0, avg_total_rent: 0, avg_rent: 0,
+            latest_lease_up: null, avg_utilities: 0, market_rent: 0,
+            annual_revenue: 0, loss_to_lease: 0,
+            physical_occ: dealRow.occupancy_rate || 0,
+          }];
         }
       }
 
       await db.from("unit_mix").delete().eq("deal_id", dealId);
       if (rows.length) await db.from("unit_mix").insert(rows);
-      const totalU = rows.reduce((s, r) => s + r.total_units, 0);
-      const totalV = rows.reduce((s, r) => s + r.vacant_units, 0);
-      const occ    = totalU > 0 ? (((totalU - totalV) / totalU) * 100).toFixed(1) : "0";
-      return { summary: `${rows.length} types · ${totalU} units · ${occ}% occ` };
+
+      const totalU  = rows.reduce((s, r) => s + r.total_units, 0);
+      const totalV  = rows.reduce((s, r) => s + r.vacant_units, 0);
+      const occ     = totalU > 0 ? (((totalU - totalV) / totalU) * 100).toFixed(1) : "0";
+      const totalRev = rows.reduce((s, r) => s + (r.annual_revenue || 0), 0);
+      return { summary: `${rows.length} types · ${totalU} units · ${occ}% occ · $${(totalRev/1000).toFixed(0)}K/yr` };
     });
 
     // ── Agents 3–6: parallel ──────────────────────────────────────────────────

@@ -105,3 +105,17 @@ export async function exportPPT(dealId: string) {
   a.download = res.headers.get("Content-Disposition")?.split("filename=")[1]?.replace(/"/g,"") || "analysis.pptx";
   a.click();
 }
+
+export async function exportUnderwritingPdf(dealId: string) {
+  const res = await fetch(`${API}/api/export-underwriting-pdf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dealId }),
+  });
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url;
+  a.download = res.headers.get("Content-Disposition")?.split("filename=")[1]?.replace(/"/g,"") || "underwriting.pdf";
+  a.click();
+}
