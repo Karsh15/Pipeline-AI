@@ -1,13 +1,49 @@
 import type { Request, Response } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import type { TDocumentDefinitions, Content, TableCell } from "pdfmake/interfaces";
+import fs from "fs";
+import path from "path";
 
-// pdfmake server instance — use the top-level singleton which wires up virtualfs + urlResolver
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfmake = require("pdfmake/js/index.js") as {
-  fonts: Record<string, unknown>;
-  createPdf(docDef: unknown): { getBuffer(): Promise<Buffer> };
+const { default: Printer }    = require("pdfmake/js/Printer.js") as { default: new (fonts: unknown, vfs: unknown, urlResolver: unknown) => { createPdfKitDocument(def: unknown): Promise<import("stream").Readable> } };
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { default: URLResolver } = require("pdfmake/js/URLResolver.js") as { default: new (vfs: unknown) => { setUrlAccessPolicy(cb: () => boolean): void; addBinary(name: string, data: Buffer): void } };
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const vfs = (require("pdfmake/js/virtual-fs.js") as { default: { writeFileSync(name: string, data: Buffer): void } }).default;
+
+// Load local font files into pdfmake's virtual filesystem
+const FONTS_DIR = path.resolve(__dirname, "../../fonts");
+for (const filename of ["Roboto-Regular.ttf", "Roboto-Medium.ttf", "Roboto-Italic.ttf", "Roboto-MediumItalic.ttf"]) {
+  vfs.writeFileSync(filename, fs.readFileSync(path.join(FONTS_DIR, filename)));
+}
+
+const _urlResolver = new URLResolver(vfs);
+_urlResolver.setUrlAccessPolicy(() => false);
+
+const _fonts = {
+  Roboto: {
+    normal:      "Roboto-Regular.ttf",
+    bold:        "Roboto-Medium.ttf",
+    italics:     "Roboto-Italic.ttf",
+    bolditalics: "Roboto-MediumItalic.ttf",
+  },
 };
+
+const _printer = new Printer(_fonts, vfs, _urlResolver);
+
+function getPdfBuffer(docDef: unknown): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    _printer.createPdfKitDocument(docDef)
+      .then(doc => {
+        const chunks: Buffer[] = [];
+        doc.on("data", (c: Buffer) => chunks.push(c));
+        doc.on("end", () => resolve(Buffer.concat(chunks)));
+        doc.on("error", reject);
+        (doc as unknown as { end(): void }).end();
+      })
+      .catch(reject);
+  });
+}
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 const NAVY   = "#0A1628";
@@ -21,15 +57,6 @@ const BLACK  = "#0F172A";
 const GREEN  = "#16A34A";
 const RED    = "#DC2626";
 
-// Helvetica is a built-in PDF font — no file paths needed
-pdfmake.fonts = {
-  Helvetica: {
-    normal:      "Helvetica",
-    bold:        "Helvetica-Bold",
-    italics:     "Helvetica-Oblique",
-    bolditalics: "Helvetica-BoldOblique",
-  },
-};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt$ = (n: number | null | undefined, decimals = 0) =>
@@ -388,7 +415,7 @@ export async function exportUnderwritingPdfHandler(req: Request, res: Response) 
     pageSize: "LETTER",
     pageOrientation: "portrait",
     pageMargins: [40, 60, 40, 50],
-    defaultStyle: { font: "Helvetica", fontSize: 9 },
+    defaultStyle: { font: "Roboto", fontSize: 9 },
 
     header: (currentPage: number, _pageCount: number): Content => ({
       columns: [
@@ -697,7 +724,7 @@ export async function exportUnderwritingPdfHandler(req: Request, res: Response) 
   };
 
   try {
-    const buffer = await pdfmake.createPdf(docDef).getBuffer();
+    const buffer = await getPdfBuffer(docDef);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${dealName.replace(/[^a-z0-9]/gi, "_")}_underwriting.pdf"`);
     res.setHeader("Content-Length", buffer.length);
