@@ -394,22 +394,28 @@ export async function exportUnderwritingPdfHandler(req: Request, res: Response) 
       columns: [
         {
           stack: [
-            { text: "CONFIDENTIAL OFFERING MEMORANDUM", fontSize: 6.5, color: GOLD, bold: true, characterSpacing: 1.5 },
-            { text: dealName, fontSize: 8, color: WHITE, bold: true },
+            { text: "CONFIDENTIAL  ·  ANTIGRAVITY CRE", fontSize: 6, color: "#8899AA", bold: false, characterSpacing: 1 },
+            { text: dealName, fontSize: 8.5, color: WHITE, bold: true, margin: [0, 1, 0, 0] },
           ],
-          margin: [40, 10, 0, 0],
+          margin: [40, 8, 0, 0],
         },
         {
-          text: [
-            { text: currentPage === 1 ? "PROPERTY SUMMARY"
-                : currentPage === 2 ? "OPERATING STATEMENT"
-                : currentPage === 3 ? "UNIT MIX"
-                : currentPage === 4 ? "RISKS & DUE DILIGENCE"
-                : "INVESTMENT SUMMARY",
-              fontSize: 7.5, color: GOLD, bold: true },
+          stack: [
+            {
+              text: currentPage === 1 ? "PROPERTY SUMMARY"
+                  : currentPage === 2 ? "OPERATING STATEMENT"
+                  : currentPage === 3 ? "UNIT MIX"
+                  : currentPage === 4 ? "RISKS & DUE DILIGENCE"
+                  : "INVESTMENT SUMMARY",
+              fontSize: 7, bold: true, color: GOLD, characterSpacing: 1.2, alignment: "right",
+            },
+            {
+              canvas: [{ type: "rect", x: 0, y: 3, w: 36, h: 2, r: 1, color: ACCENT }],
+              margin: [0, 0, 0, 0],
+            },
           ],
           alignment: "right",
-          margin: [0, 14, 40, 0],
+          margin: [0, 10, 40, 0],
         },
       ],
       fillColor: NAVY,
@@ -433,9 +439,9 @@ export async function exportUnderwritingPdfHandler(req: Request, res: Response) 
         fontSize: 8, color: GRAY, bold: false,
       },
       propValue: {
-        fontSize: 8, color: BLACK, bold: true,
+        fontSize: 8.5, color: BLACK, bold: true,
       },
-      h1: { fontSize: 22, bold: true, color: WHITE },
+      h1: { fontSize: 26, bold: true, color: WHITE },
       h2: { fontSize: 13, bold: true, color: WHITE },
       sub: { fontSize: 9, color: GOLD },
     },
@@ -444,29 +450,59 @@ export async function exportUnderwritingPdfHandler(req: Request, res: Response) 
 
       // ── PAGE 1: Cover / Property Summary ──────────────────────────────────
 
-      // Hero band
+      // Hero: full-width navy cover block
       {
         table: {
           widths: ["*"],
           body: [[
             {
               stack: [
-                { text: dealName.toUpperCase(), style: "h1", margin: [0, 0, 0, 4] },
-                { text: address,                style: "sub", margin: [0, 0, 0, 8] },
+                // Eyebrow label
+                {
+                  text: "CONFIDENTIAL OFFERING MEMORANDUM",
+                  fontSize: 7, bold: true, color: GOLD,
+                  characterSpacing: 2, margin: [0, 0, 0, 10],
+                },
+                // Accent rule
+                {
+                  canvas: [{ type: "rect", x: 0, y: 0, w: 36, h: 3, r: 1.5, color: ACCENT }],
+                  margin: [0, 0, 0, 10],
+                },
+                // Property name — large, bold
+                {
+                  text: dealName.toUpperCase(),
+                  fontSize: 24, bold: true, color: WHITE,
+                  lineHeight: 1.15, margin: [0, 0, 0, 10],
+                },
+                // Address
+                {
+                  text: address || "",
+                  fontSize: 10, color: "#A8B8D0", margin: [0, 0, 0, 14],
+                },
+                // Badges row: Asset Type + Year Built
                 {
                   columns: [
-                    { text: (d.asset_type as string || "Commercial Real Estate").toUpperCase(), style: "sub" },
-                    { text: yearBuilt ? `Built ${yearBuilt}` : "", style: "sub", alignment: "right" },
+                    ...(d.asset_type ? [{
+                      text: (d.asset_type as string).toUpperCase(),
+                      fontSize: 7.5, bold: true, color: GOLD,
+                      characterSpacing: 1.2,
+                    }] : []),
+                    ...(yearBuilt ? [{
+                      text: `BUILT ${yearBuilt}`,
+                      fontSize: 7.5, bold: true, color: "#A8B8D0",
+                      characterSpacing: 1.2, alignment: "right" as const,
+                    }] : []),
                   ],
+                  columnGap: 8,
                 },
               ],
               fillColor: NAVY,
-              margin: [20, 20, 20, 20],
+              margin: [28, 28, 28, 28],
             },
           ]],
         },
         layout: "noBorders",
-        margin: [-40, -60, -40, 16],
+        margin: [-40, -60, -40, 20],
       } as Content,
 
       // KPI row
