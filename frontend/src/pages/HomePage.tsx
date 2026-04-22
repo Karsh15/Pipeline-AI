@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Search, Filter, FolderOpen, Plus, Download, Map as MapIcon, Table2,
   MessageSquare, ChevronDown, ChevronRight, MoreHorizontal, Zap, AlertCircle,
-  CheckCircle2, MapPin, Send, X,
+  CheckCircle2, MapPin, Send, X, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { supabase, type DBDeal } from "@/lib/supabase";
 import { fetchDeals, createDeal, triggerExtraction, triggerUnderwriting } from "@/lib/pipeline";
@@ -309,11 +309,13 @@ export default function Home() {
     setGlobalChatTyping(false);
   };
 
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   return (
     <div className="flex h-screen w-full overflow-hidden font-sans bg-white">
 
       {/* ═══ LEFT SIDEBAR ═══ */}
-      <aside className="w-[320px] flex-shrink-0 flex flex-col border-r border-border bg-white">
+      <aside className={`${sidebarOpen ? "w-[280px] lg:w-[320px]" : "w-0"} flex-shrink-0 flex flex-col border-r border-border bg-white transition-all duration-300 overflow-hidden`}>
 
         {/* Logo + tabs */}
         <div className="px-4 py-3 border-b border-border">
@@ -365,7 +367,7 @@ export default function Home() {
         </div>
 
         {/* Status groups */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto scrollbar-thin">
           {STATUS_GROUPS.map(status => {
             const deals = grouped[status];
             const open  = openGroups[status];
@@ -460,7 +462,15 @@ export default function Home() {
         </AnimatePresence>
 
         {/* Top bar */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-white z-10">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-white z-10 gap-2">
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSidebarOpen(o => !o)}
+              className="p-1.5 hover:bg-secondary rounded-lg transition-colors flex-shrink-0"
+              title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+              {sidebarOpen
+                ? <PanelLeftClose className="h-4 w-4 text-muted-foreground" />
+                : <PanelLeftOpen  className="h-4 w-4 text-muted-foreground" />}
+            </button>
           <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
             <button onClick={() => setView("map")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all
@@ -477,6 +487,7 @@ export default function Home() {
                 ${view === "chat" ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
               <MessageSquare className="h-3.5 w-3.5" /> Chat
             </button>
+          </div>
           </div>
 
           <div className="flex items-center gap-2">

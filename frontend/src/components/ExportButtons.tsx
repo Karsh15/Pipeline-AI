@@ -1,94 +1,77 @@
-
-
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { FileSpreadsheet, Presentation, Loader2, CheckCircle2, Download, FileText } from "lucide-react";
 import { exportExcel, exportPPT, exportUnderwritingPdf } from "@/lib/pipeline";
 
-export default function ExportButtons({ dealId, dealName }: { dealId: string; dealName: string }) {
-  const [xlsxState, setXlsxState] = useState<"idle" | "loading" | "done">("idle");
-  const [pptState,  setPptState]  = useState<"idle" | "loading" | "done">("idle");
-  const [pdfState,  setPdfState]  = useState<"idle" | "loading" | "done">("idle");
+type BtnState = "idle" | "loading" | "done" | "error";
 
-  const handleExcel = async () => {
-    setXlsxState("loading");
-    await exportExcel(dealId);
-    setXlsxState("done");
-    setTimeout(() => setXlsxState("idle"), 2500);
-  };
+function ExportBtn({
+  state, onClick, icon, idleLabel, loadingLabel = "Generating…", className = "",
+}: {
+  state: BtnState; onClick: () => void; icon: React.ReactNode;
+  idleLabel: string; loadingLabel?: string; className?: string;
+}) {
+  return (
+    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+      onClick={onClick} disabled={state === "loading"}
+      className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all border
+        ${state === "done"  ? "bg-emerald-500 text-white border-emerald-500" :
+          state === "error" ? "bg-red-500 text-white border-red-500" :
+          className} disabled:opacity-60`}>
+      {state === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> :
+       state === "done"    ? <CheckCircle2 className="h-4 w-4" /> :
+       state === "error"   ? <span className="text-xs">Retry</span> :
+       icon}
+      {state === "loading" ? loadingLabel :
+       state === "done"    ? "Downloaded!" :
+       state === "error"   ? "Failed — retry" :
+       idleLabel}
+    </motion.button>
+  );
+}
 
-  const handlePPT = async () => {
-    setPptState("loading");
-    await exportPPT(dealId);
-    setPptState("done");
-    setTimeout(() => setPptState("idle"), 2500);
+function useBtnState(fn: () => Promise<void>): [BtnState, () => Promise<void>] {
+  const [state, setState] = useState<BtnState>("idle");
+  const run = async () => {
+    setState("loading");
+    try {
+      await fn();
+      setState("done");
+      setTimeout(() => setState("idle"), 2500);
+    } catch {
+      setState("error");
+      setTimeout(() => setState("idle"), 3000);
+    }
   };
+  return [state, run];
+}
 
-  const handlePdf = async () => {
-    setPdfState("loading");
-    await exportUnderwritingPdf(dealId);
-    setPdfState("done");
-    setTimeout(() => setPdfState("idle"), 2500);
-  };
+export default function ExportButtons({ dealId }: { dealId: string; dealName?: string }) {
+  const [xlsxState, runExcel] = useBtnState(() => exportExcel(dealId));
+  const [pptState,  runPPT]   = useBtnState(() => exportPPT(dealId));
+  const [pdfState,  runPdf]   = useBtnState(() => exportUnderwritingPdf(dealId));
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
         <Download className="h-3 w-3" /> Export Analysis
       </div>
       <div className="flex gap-2">
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleExcel}
-          disabled={xlsxState === "loading"}
-          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all border
-            ${xlsxState === "done"
-              ? "bg-emerald-500 text-white border-emerald-500"
-              : "bg-white border-border text-foreground hover:bg-[#FFF6ED] hover:border-primary/30"
-            } disabled:opacity-60`}
-        >
-          {xlsxState === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> :
-           xlsxState === "done"    ? <CheckCircle2 className="h-4 w-4" /> :
-                                     <FileSpreadsheet className="h-4 w-4 text-emerald-600" />}
-          {xlsxState === "loading" ? "Generating..." : xlsxState === "done" ? "Downloaded!" : "Excel Model"}
-        </motion.button>
-
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handlePPT}
-          disabled={pptState === "loading"}
-          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all border
-            ${pptState === "done"
-              ? "bg-emerald-500 text-white border-emerald-500"
-              : "bg-white border-border text-foreground hover:bg-[#FFF6ED] hover:border-primary/30"
-            } disabled:opacity-60`}
-        >
-          {pptState === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> :
-           pptState === "done"    ? <CheckCircle2 className="h-4 w-4" /> :
-                                    <Presentation className="h-4 w-4 text-orange-500" />}
-          {pptState === "loading" ? "Generating..." : pptState === "done" ? "Downloaded!" : "PowerPoint"}
-        </motion.button>
+        <ExportBtn state={xlsxState} onClick={runExcel}
+          icon={<FileSpreadsheet className="h-4 w-4 text-emerald-600" />}
+          idleLabel="Excel"
+          className="flex-1 bg-white border-border text-foreground hover:bg-[#FFF6ED] hover:border-primary/30" />
+        <ExportBtn state={pptState} onClick={runPPT}
+          icon={<Presentation className="h-4 w-4 text-orange-500" />}
+          idleLabel="Slides"
+          className="flex-1 bg-white border-border text-foreground hover:bg-[#FFF6ED] hover:border-primary/30" />
       </div>
-      <motion.button
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={handlePdf}
-        disabled={pdfState === "loading"}
-        className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all border
-          ${pdfState === "done"
-            ? "bg-emerald-500 text-white border-emerald-500"
-            : "bg-[#0A1628] text-white border-[#0A1628] hover:bg-[#1E3A5F]"
-          } disabled:opacity-60`}
-      >
-        {pdfState === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> :
-         pdfState === "done"    ? <CheckCircle2 className="h-4 w-4" /> :
-                                  <FileText className="h-4 w-4" />}
-        {pdfState === "loading" ? "Generating PDF..." : pdfState === "done" ? "Downloaded!" : "Underwriting PDF"}
-      </motion.button>
+      <ExportBtn state={pdfState} onClick={runPdf}
+        icon={<FileText className="h-4 w-4" />}
+        idleLabel="Underwriting PDF" loadingLabel="Generating PDF…"
+        className="w-full bg-primary text-white border-primary hover:bg-primary/90" />
       <p className="text-[10px] text-muted-foreground text-center">
-        Generates from live AI-extracted deal data
+        Generated from live AI-extracted deal data
       </p>
     </div>
   );
