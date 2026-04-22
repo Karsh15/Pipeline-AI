@@ -473,33 +473,13 @@ export default function Home() {
             </button>
 
             {selectedDbDeal ? (
-              /* When a deal is open — show breadcrumb + back button */
-              <div className="flex items-center gap-2 min-w-0">
-                <button
-                  onClick={() => { setSelectedDbDeal(null); setSelectedId(null); }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0">
-                  <ChevronRight className="h-3.5 w-3.5 rotate-180" />
-                  Back
-                </button>
-                <span className="text-muted-foreground/40 flex-shrink-0">·</span>
-                <div className="flex items-center gap-1 bg-secondary rounded-xl p-1 flex-shrink-0">
-                  <button onClick={() => setView("map")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all
-                      ${view === "map" ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                    <MapIcon className="h-3.5 w-3.5" /> Map
-                  </button>
-                  <button onClick={() => setView("table")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all
-                      ${view === "table" ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                    <Table2 className="h-3.5 w-3.5" /> Table
-                  </button>
-                  <button onClick={() => setView("chat")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all
-                      ${view === "chat" ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                    <MessageSquare className="h-3.5 w-3.5" /> Chat
-                  </button>
-                </div>
-              </div>
+              /* When a deal is open — show only Back button */
+              <button
+                onClick={() => { setSelectedDbDeal(null); setSelectedId(null); }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0">
+                <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+                Back
+              </button>
             ) : (
               /* Normal view — Map / Table / Chat switcher */
               <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
