@@ -1,0 +1,46 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+dist/
+**/dist/
+/.next/
+/out/
+
+# env files — never commit secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# testing / coverage
+/coverage
+
+# internal tool config
+.claude/
+.agent/
+
+# misc
+.DS_Store
+*.pem
+*.zip
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# vercel
+.vercel
+
+# yarn
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
