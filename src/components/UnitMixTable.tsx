@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Building2, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import { supabase, type DBUnitMix } from "@/lib/supabase";
-import WhyPanel from "./WhyPanel";
+import DetailPanel, { type PanelData, type UnitRowData } from "./DetailPanel";
 
 export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: string; refreshKey?: number }) {
   const [rows, setRows]   = useState<DBUnitMix[]>([]);
   const [loading, setLoading] = useState(true);
-  const [why, setWhy]     = useState<{ field: string; label: string; value: string } | null>(null);
+  const [panel, setPanel] = useState<PanelData | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -23,6 +23,27 @@ export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: strin
     n && n > 0 ? Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
   const fmtPct = (n: number | null | undefined) =>
     n && n > 0 ? `${Number(n).toFixed(1)}%` : "—";
+
+  const buildUnitPanel = (row: DBUnitMix): UnitRowData => {
+    const occ = row.total_units > 0
+      ? ((row.total_units - row.vacant_units) / row.total_units) * 100
+      : (row.physical_occ || 0);
+    return {
+      kind: "unit",
+      unitType: row.unit_type,
+      totalUnits: row.total_units,
+      vacantUnits: row.vacant_units,
+      physOcc: occ,
+      avgBaseRent: row.avg_base_rent || row.avg_rent,
+      avgTotalRent: row.avg_total_rent || row.avg_rent,
+      marketRent: row.market_rent || 0,
+      lossToLease: row.loss_to_lease || 0,
+      annualRevenue: row.annual_revenue || 0,
+      avgSqft: row.avg_sqft || 0,
+      avgUtilities: row.avg_utilities || 0,
+      latestLeaseUp: row.latest_lease_up,
+    };
+  };
 
   // Portfolio-level aggregates
   const totalUnits   = rows.reduce((s, r) => s + r.total_units, 0);
@@ -74,7 +95,7 @@ export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: strin
         ].map(stat => (
           <div key={stat.label}
             className="bg-white border border-border rounded-xl p-3 cursor-pointer group hover:border-primary/30 hover:shadow-sm transition-all"
-            onClick={() => setWhy({ field: stat.field, label: stat.label, value: stat.value })}>
+            onClick={() => {/* portfolio summary — no single row to drill into */}}>
             <div className="text-xl font-heading font-black text-foreground">{stat.value}</div>
             <div className="flex items-center justify-between mt-0.5">
               <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{stat.label}</span>
@@ -142,7 +163,7 @@ export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: strin
                   <motion.tr key={row.id}
                     initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
                     className="hover:bg-[#FFF6ED] transition-colors cursor-pointer group"
-                    onClick={() => setWhy({ field: row.unit_type, label: row.unit_type, value: fmt$(row.avg_total_rent || row.avg_rent) })}>
+                    onClick={() => setPanel(buildUnitPanel(row))}>
                     <td className="px-4 py-3 font-semibold text-foreground">
                       <span className="flex items-center gap-1.5">
                         {row.unit_type}
@@ -208,7 +229,7 @@ export default function UnitMixTable({ dealId, refreshKey = 0 }: { dealId: strin
         </div>
       </div>
 
-      {why && <WhyPanel dealId={dealId} fieldName={why.field} fieldLabel={why.label} value={why.value} onClose={() => setWhy(null)} />}
+      {panel && <DetailPanel dealId={dealId} data={panel} onClose={() => setPanel(null)} />}
     </div>
   );
 }

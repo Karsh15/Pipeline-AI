@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, BarChart3, Sparkles, Calendar, DollarSign, AlertTriangle, CheckCircle2, Minus } from "lucide-react";
 import { supabase, type DBFinancial, type DBDeal } from "@/lib/supabase";
-import WhyPanel from "./WhyPanel";
+import DetailPanel, { type PanelData, type FinRowData } from "./DetailPanel";
 
 interface Props { dealId: string; deal: DBDeal | null; refreshKey?: number }
 
@@ -77,7 +77,7 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
   const [rows, setRows]       = useState<DBFinancial[]>([]);
   const [kpis, setKpis]       = useState<Record<string,number>>({});
   const [loading, setLoading] = useState(true);
-  const [why, setWhy]         = useState<{ field: string; label: string; value: string } | null>(null);
+  const [panel, setPanel]     = useState<PanelData | null>(null);
   const [view, setView]       = useState<ViewMode>("annual");
 
   useEffect(() => {
@@ -118,6 +118,18 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
                           ...expenses.filter(r => !EXPENSE_ORDER.includes(r.sub_category))];
 
   const findRow = (...names: string[]) => rows.find(r => names.some(n => r.sub_category === n));
+
+  const buildPanel = (row: DBFinancial): FinRowData => ({
+    kind: "financial",
+    metric: row.sub_category,
+    ttm: row.ttm || 0,
+    category: row.category,
+    monthly: MONTH_KEYS.map(k => (row[k] as number) || 0),
+    monthLabels: MONTH_LABELS,
+    perUnit: row.per_unit || undefined,
+    pctOfRevenue: row.pct_egi || undefined,
+    yoy: yoyPct(row),
+  });
 
   const revenue  = findRow("Total Revenue","Total Operating Revenue","Effective Gross Income");
   const gopRow   = findRow("Gross Operating Profit");
@@ -195,7 +207,7 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
             <motion.tr key={row.id}
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
               className={`hover:bg-[#FFF6ED] transition-colors cursor-pointer group ${hi ? "bg-slate-50/80" : ""}`}
-              onClick={() => setWhy({ field: row.sub_category, label: row.sub_category, value: fmtPlain(row.ttm) })}>
+              onClick={() => setPanel(buildPanel(row))}>
               <td className={`px-4 py-2.5 text-sm ${hi ? "font-black text-foreground" : "font-medium text-slate-700"}`}>
                 <span className="flex items-center gap-1.5">
                   {hi && <span className="w-1 h-4 bg-primary rounded-full flex-shrink-0"/>}
@@ -289,7 +301,10 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
           ].map(card => (
             <div key={card.label}
               className="bg-slate-50 border border-border rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer group hover:border-primary/30 hover:bg-white hover:shadow-sm transition-all"
-              onClick={() => setWhy({ field: card.field, label: card.label, value: card.value })}>
+              onClick={() => {
+                const r = findRow(card.field, card.label);
+                if (r) setPanel(buildPanel(r));
+              }}>
               <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{card.label}</div>
               <div className={`text-lg font-black ${card.color}`}>{card.value}</div>
             </div>
@@ -300,21 +315,25 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
       {/* ── Key metric cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "Guidance Price",  value: fmtPlain(deal?.guidance_price),           field: "guidancePrice",  icon: DollarSign   },
-          { label: "Total Revenue",   value: fmtPlain(revTTM || undefined),             field: "totalRevenue",   icon: TrendingUp   },
-          { label: "Gross Op. Profit",value: fmtPlain(gopTTM || undefined),             field: "gop",            icon: BarChart3    },
-          { label: "EBITDA",          value: fmtPlain(ebitdaTTM || undefined),          field: "ebitda",         icon: BarChart3    },
-          { label: "Net Income",      value: fmtPlain(netIncTTM || undefined),          field: "netIncome",      icon: netIncTTM >= 0 ? TrendingUp : TrendingDown },
-          { label: "Cap Rate",        value: deal?.cap_rate ? `${deal.cap_rate}%` : "—", field: "capRate",       icon: BarChart3    },
-          { label: "GOP Margin",      value: gopMargin > 0 ? `${gopMargin.toFixed(1)}%` : "—", field: "gopMargin", icon: BarChart3  },
-          { label: "Per Key / Unit",  value: noiPerUnit !== 0 ? `$${Math.abs(noiPerUnit).toLocaleString()}` : "—", field: "noiPerUnit", icon: BarChart3 },
+          { label: "Guidance Price",  value: fmtPlain(deal?.guidance_price),           rowKeys: [] as string[],                                             icon: DollarSign   },
+          { label: "Total Revenue",   value: fmtPlain(revTTM || undefined),             rowKeys: ["Total Revenue","Total Operating Revenue","Effective Gross Income"], icon: TrendingUp   },
+          { label: "Gross Op. Profit",value: fmtPlain(gopTTM || undefined),             rowKeys: ["Gross Operating Profit"],                                 icon: BarChart3    },
+          { label: "EBITDA",          value: fmtPlain(ebitdaTTM || undefined),          rowKeys: ["EBITDA"],                                                 icon: BarChart3    },
+          { label: "Net Income",      value: fmtPlain(netIncTTM || undefined),          rowKeys: ["Net Income"],                                             icon: netIncTTM >= 0 ? TrendingUp : TrendingDown },
+          { label: "Cap Rate",        value: deal?.cap_rate ? `${deal.cap_rate}%` : "—", rowKeys: [] as string[],                                            icon: BarChart3    },
+          { label: "GOP Margin",      value: gopMargin > 0 ? `${gopMargin.toFixed(1)}%` : "—", rowKeys: ["Gross Operating Profit"],                         icon: BarChart3    },
+          { label: "Per Key / Unit",  value: noiPerUnit !== 0 ? `$${Math.abs(noiPerUnit).toLocaleString()}` : "—", rowKeys: ["Net Operating Income","NOI","Gross Operating Profit"], icon: BarChart3 },
         ].map(card => {
           const Icon = card.icon;
           const isNeg = card.value.startsWith("(");
           return (
             <div key={card.label}
               className="bg-white border border-border rounded-xl p-4 cursor-pointer group hover:border-primary/30 hover:shadow-md transition-all"
-              onClick={() => setWhy({ field: card.field, label: card.label, value: card.value })}>
+              onClick={() => {
+                if (!card.rowKeys.length) return;
+                const r = findRow(...card.rowKeys);
+                if (r) setPanel(buildPanel(r));
+              }}>
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{card.label}</div>
                 <Icon className={`h-3.5 w-3.5 ${isNeg ? "text-red-400" : "text-slate-300"} group-hover:text-primary transition-colors`}/>
@@ -396,7 +415,7 @@ export default function FinancialDashboard({ dealId, deal, refreshKey = 0 }: Pro
         )}
       </div>
 
-      {why && <WhyPanel dealId={dealId} fieldName={why.field} fieldLabel={why.label} value={why.value} onClose={() => setWhy(null)}/>}
+      {panel && <DetailPanel dealId={dealId} data={panel} onClose={() => setPanel(null)}/>}
     </div>
   );
 }

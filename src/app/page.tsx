@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Search, Filter, FolderOpen, Plus, Download, Map as MapIcon, Table2,
   MessageSquare, ChevronDown, ChevronRight, MoreHorizontal, Zap, AlertCircle,
-  MapPin, Send, X,
+  CheckCircle2, MapPin, Send, X,
 } from "lucide-react";
 import { supabase, type DBDeal } from "@/lib/supabase";
 import { fetchDeals, createDeal, triggerExtraction, triggerUnderwriting } from "@/lib/pipeline";
 import { mockDeals, formatCurrency, type Deal, type DealStatus } from "@/lib/mockData";
 import DealWorkspace from "@/components/DealWorkspace";
 import AgentRunner from "@/components/AgentRunner";
+import OutlookInbox from "@/components/OutlookInbox";
 
 const MapComponent = dynamic(() => import("@/components/Map"), {
   ssr: false,
@@ -151,6 +152,8 @@ export default function Home() {
   const [agentFile, setAgentFile]             = useState<File | null>(null);
   const [chatInput, setChatInput]             = useState("");
   const [creatingDeal, setCreatingDeal]       = useState(false);
+  const [outlookToast, setOutlookToast]       = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const outlookToastTimer                     = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Group by status for sidebar
   const filtered = allDeals.filter(d =>
@@ -239,6 +242,33 @@ export default function Home() {
     setCreatingDeal(false);
     setShowImport(false);
   };
+
+  // Handle OAuth callback toast (?outlook=connected | error)
+  // Must run after hydration — useEffect guarantees client-only execution.
+  // We use the native History API directly (not Next.js router) to strip the
+  // query params so we don't trigger "Router action before initialization".
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ot = params.get("outlook");
+    if (!ot) return;
+    const email  = params.get("email");
+    const reason = params.get("reason");
+    if (ot === "connected") {
+      setOutlookToast({ type: "success", msg: `Outlook connected${email ? ` · ${email}` : ""}` });
+    } else if (ot === "error") {
+      setOutlookToast({ type: "error", msg: `Outlook error: ${reason ?? "unknown"}` });
+    }
+    // Strip ?outlook=... from the URL bar without any navigation
+    const url = new URL(window.location.href);
+    url.searchParams.delete("outlook");
+    url.searchParams.delete("email");
+    url.searchParams.delete("reason");
+    // replaceState with { shallow: true } equivalent — no Next.js router involved
+    history.replaceState(history.state, "", url.pathname + (url.search || ""));
+    if (outlookToastTimer.current) clearTimeout(outlookToastTimer.current);
+    outlookToastTimer.current = setTimeout(() => setOutlookToast(null), 6000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleGroup = (s: DealStatus) => setOpenGroups(p => ({ ...p, [s]: !p[s] }));
 
@@ -392,6 +422,14 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Outlook integration panel */}
+        <div className="px-3 py-3 border-t border-border">
+          <OutlookInbox onDealCreated={(id) => {
+            const dbDeal = dbDeals.find(d => d.id === id);
+            if (dbDeal) { setSelectedDbDeal(dbDeal); setSelectedId(id); }
+          }} />
+        </div>
+
         {/* User footer */}
         <div className="px-4 py-3 border-t border-border flex items-center gap-2">
           <div className="w-7 h-7 rounded-full bg-slate-800 text-white flex items-center justify-center text-xs font-bold">
@@ -406,6 +444,24 @@ export default function Home() {
 
       {/* ═══ MAIN AREA ═══ */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
+
+        {/* Outlook OAuth toast */}
+        <AnimatePresence>
+          {outlookToast && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+              className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-xl text-sm font-bold flex items-center gap-2
+                ${outlookToast.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
+              {outlookToast.type === "success"
+                ? <CheckCircle2 className="h-4 w-4" />
+                : <AlertCircle className="h-4 w-4" />}
+              {outlookToast.msg}
+              <button onClick={() => setOutlookToast(null)} className="ml-2 opacity-70 hover:opacity-100">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Top bar */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-white z-10">

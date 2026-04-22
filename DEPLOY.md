@@ -1,122 +1,129 @@
 # VPS Deployment Guide
 
-## 1. Provision the server
+## Architecture
 
-Ubuntu 22.04 / 24.04 VPS. Install Node 20, PM2, and Nginx:
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs nginx
-sudo npm install -g pm2
-sudo mkdir -p /var/log/pipeline-ai
+```
+VPS (Ubuntu 22.04)
+  ├── Nginx  (:80/:443)
+  │   ├── /          → serves frontend/dist (static files)
+  │   └── /api/*     → proxies to Express backend on :4000
+  └── PM2
+      └── pipeline-backend  → backend/dist/server.js
 ```
 
-## 2. Build locally
+## 1. Server Setup
 
 ```bash
+ssh root@YOUR_VPS_IP
+
+apt update && apt upgrade -y
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs nginx
+npm install -g pm2
+mkdir -p /var/www/pipeline-ai
+```
+
+## 2. Upload Project
+
+```bash
+# From your local machine:
+rsync -avz --exclude node_modules --exclude .next --exclude .git \
+  ./ root@YOUR_VPS_IP:/var/www/pipeline-ai/
+```
+
+## 3. Build Frontend
+
+```bash
+cd /var/www/pipeline-ai/frontend
+# Create frontend/.env.production
+echo "VITE_SUPABASE_URL=https://txrpnyhugurcfpfycqnq.supabase.co" > .env.production
+echo "VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY" >> .env.production
+echo "VITE_API_URL=" >> .env.production   # empty = use Nginx proxy
+
 npm install
-npm run build
+npm run build   # output: frontend/dist/
 ```
 
-This produces `dist/` with the full standalone server.
-
-## 3. Pack for upload
-
-On Windows (PowerShell):
-```powershell
-Compress-Archive -Path dist/standalone/* -DestinationPath pipeline-ai.zip
-```
-
-On Mac/Linux:
-```bash
-tar -czf pipeline-ai.tar.gz -C dist/standalone .
-```
-
-## 4. Upload to VPS
+## 4. Build Backend
 
 ```bash
-scp pipeline-ai.tar.gz        user@YOUR_VPS_IP:~/
-scp -r dist/static            user@YOUR_VPS_IP:/tmp/next-static
-scp -r public                 user@YOUR_VPS_IP:/tmp/public
-scp infra/ecosystem.config.js user@YOUR_VPS_IP:~/
-scp infra/nginx.conf          user@YOUR_VPS_IP:~/
+cd /var/www/pipeline-ai/backend
+cp .env .env.production  # edit APP_URL and BACKEND_URL to your domain
+
+npm install
+npm run build   # output: backend/dist/
+mkdir -p logs
 ```
 
-## 5. Extract and configure
+## 5. Configure Nginx
 
 ```bash
-ssh user@YOUR_VPS_IP
-mkdir -p /var/www/pipeline-ai/.next
-cd /var/www/pipeline-ai
-tar -xzf ~/pipeline-ai.tar.gz
-cp -r /tmp/next-static .next/static
-cp -r /tmp/public      public
-cp ~/ecosystem.config.js .
+cp /var/www/pipeline-ai/nginx.conf /etc/nginx/sites-available/pipeline-ai
+# Edit: replace "your-domain.com" with your actual domain
+nano /etc/nginx/sites-available/pipeline-ai
+
+ln -sf /etc/nginx/sites-available/pipeline-ai /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 ```
 
-Create `/var/www/pipeline-ai/.env`:
-```env
-NODE_ENV=production
-PORT=3000
-
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-NVIDIA_API_KEY=nvapi-...
-GROQ_API_KEY=gsk_...
-
-USE_LOCAL_LLM=false
-```
-
-## 6. Start with PM2
+## 6. Start Backend with PM2
 
 ```bash
 cd /var/www/pipeline-ai
 pm2 start ecosystem.config.js
 pm2 save
-pm2 startup    # run the printed command to enable auto-start on reboot
+pm2 startup   # run the printed command to enable auto-start on reboot
 ```
 
-App is now running on `http://YOUR_VPS_IP:3000`.
-
-## 7. Nginx reverse proxy + HTTPS
+## 7. SSL (optional but recommended)
 
 ```bash
-sudo cp ~/nginx.conf /etc/nginx/sites-available/pipeline-ai
-sudo nano /etc/nginx/sites-available/pipeline-ai   # set your domain in server_name
-sudo ln -s /etc/nginx/sites-available/pipeline-ai /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
+apt install -y certbot python3-certbot-nginx
+certbot --nginx -d your-domain.com
 ```
 
-`infra/nginx.conf` is pre-configured with SSE streaming settings (`proxy_buffering off`, 600s timeouts).
+## 8. Update Azure for Outlook OAuth
 
-## 8. Redeploying updates
+In Azure portal → App registrations → your app → Authentication:
+- Add Redirect URI: `https://your-domain.com/api/outlook/callback`
+- Update `BACKEND_URL=https://your-domain.com` in backend `.env`
+
+## Updating the App
 
 ```bash
-# Local: rebuild and repack (steps 2–4 above), then on VPS:
 cd /var/www/pipeline-ai
-tar -xzf ~/pipeline-ai.tar.gz
-cp -r /tmp/next-static .next/static
-pm2 restart pipeline-ai
+git pull
+cd frontend && npm install && npm run build && cd ..
+cd backend && npm install && npm run build && cd ..
+pm2 restart pipeline-backend
 ```
 
-## Common ops
+## Useful Commands
 
 ```bash
-pm2 logs pipeline-ai           # live logs
-pm2 monit                      # resource dashboard
-pm2 restart pipeline-ai        # restart after deploy
-tail -f /var/log/pipeline-ai/err.log
+pm2 logs pipeline-backend   # live logs
+pm2 status
+systemctl status nginx
+nginx -t
 ```
 
-## Troubleshooting
+## Environment Variables
 
-**SSE stream cuts off** — verify `proxy_buffering off` and `proxy_read_timeout 600s` in nginx.conf.
+### frontend/.env.production
+| Variable | Value |
+|---|---|
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon key |
+| `VITE_API_URL` | Leave empty (Nginx proxies /api) |
 
-**Out of memory** — ecosystem config sets `--max-old-space-size=2048`. Set to 4096 on a larger VPS.
-
-**LLM timeouts** — set `USE_LOCAL_LLM=false` in `.env` to route everything to NVIDIA/Groq cloud.
+### backend/.env
+| Variable | Description |
+|---|---|
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
+| `NVIDIA_API_KEY` + `NVIDIA_API_KEY_*` | Per-agent NVIDIA NIM keys |
+| `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_CLIENT_SECRET` | Outlook OAuth |
+| `APP_URL` | Frontend origin e.g. `https://your-domain.com` |
+| `BACKEND_URL` | Backend origin (same as APP_URL when using Nginx) |
+| `PORT` | Express port (default `4000`) |
