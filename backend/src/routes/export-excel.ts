@@ -173,7 +173,7 @@ export async function exportExcelHandler(req: Request, res: Response) {
     ws6.getCell(`D${rn}`).font  = { bold: true, color: { argb: c.meets ? "FF10B981" : "FFEF4444" } };
   });
 
-  const buffer = await wb.xlsx.writeBuffer() as Buffer;
+  const buffer = Buffer.from(await wb.xlsx.writeBuffer());
   const filename = `${(deal?.name || "deal").replace(/\s+/g,"_")}_underwriting.xlsx`;
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);

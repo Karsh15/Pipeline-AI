@@ -14,7 +14,8 @@ export type PipelineStatus =
   | "extraction"
   | "underwriting"
   | "review"
-  | "completed";
+  | "completed"
+  | "dead";
 
 export interface DBDeal {
   id: string;

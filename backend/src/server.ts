@@ -31,19 +31,27 @@ app.use(express.json({ limit: "10mb" }));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.post("/api/chat",              chatHandler);
-app.post("/api/export-excel",      exportExcelHandler);
-app.post("/api/export-ppt",        exportPptHandler);
-app.post("/api/process-documents", upload.single("file"), processDocumentsHandler);
-app.post("/api/run-extraction",    runExtractionHandler);
-app.post("/api/run-underwriting",  runUnderwritingHandler);
+// Dual-mount: /api/... (dev) and /... (production via Passenger strip)
+const routes = (r: express.Router) => {
+  r.post("/chat",              chatHandler);
+  r.post("/export-excel",      exportExcelHandler);
+  r.post("/export-ppt",        exportPptHandler);
+  r.post("/process-documents", upload.single("file"), processDocumentsHandler);
+  r.post("/run-extraction",    runExtractionHandler);
+  r.post("/run-underwriting",  runUnderwritingHandler);
 
-app.get ("/api/outlook/connect",    outlookConnectHandler);
-app.get ("/api/outlook/callback",   outlookCallbackHandler);
-app.get ("/api/outlook/status",     outlookStatusHandler);
-app.post("/api/outlook/poll",       outlookPollHandler);
-app.post("/api/outlook/disconnect", outlookDisconnectHandler);
+  r.get ("/outlook/connect",    outlookConnectHandler);
+  r.get ("/outlook/callback",   outlookCallbackHandler);
+  r.get ("/outlook/status",     outlookStatusHandler);
+  r.post("/outlook/poll",       outlookPollHandler);
+  r.post("/outlook/disconnect", outlookDisconnectHandler);
 
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  r.get("/health", (_req, res) => res.json({ ok: true }));
+};
+
+const apiRouter = express.Router();
+routes(apiRouter);
+app.use("/api", apiRouter);
+app.use("/",    apiRouter);
 
 app.listen(PORT, () => console.log(`[server] listening on port ${PORT}`));
