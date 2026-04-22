@@ -254,15 +254,20 @@ export async function runExtractionHandler(req: Request, res: Response) {
           content: "You are a CRE analyst. Extract metadata from the OM and related docs. Output ONLY a raw JSON object. No preamble, no markdown. Never guess — if a field is genuinely missing, use 0 or empty string.",
         }, {
           role: "user",
-          content: `Find these fields in the documents below and return JSON:
+          content: `Return ONLY this JSON with values filled from the documents:
 {"name":"","propertyType":"","assetType":"","address":"","city":"","state":"","units":0,"yearBuilt":0,"renovationYear":0,"broker":"","brokerPhone":"","brokerEmail":"","brokerWebsite":"","brand":"","guidancePrice":0,"dealLead":"","floors":0,"parkingSpaces":0,"lotSizeAcres":0,"occupancyRate":0,"constructionType":"","zoning":"","marketName":"","submarket":"","loanAmount":0,"loanType":"","interestRate":0,"loanMaturity":"","managementCompany":"","franchiseExpiry":"","amenitiesSummary":""}
 
-EXTRACTION RULES:
-- "name": full property title. - "propertyType": Hotel, Multifamily, Office, Retail, Industrial.
-- "assetType": Hospitality, Residential, Commercial, Industrial. - "address": ONLY the street.
-- "city": just city name. - "state": 2-letter USPS code. - "units": rooms/keys or apartment units.
-- "broker": brokerage firm only. - "brand": hotel flag. - "dealLead": named broker contact person.
-- "guidancePrice": asking price in dollars as integer.
+RULES (use 0 or "" when not found, never invent):
+name=full property title; propertyType=Hotel|Multifamily|Office|Retail|Industrial; assetType=Hospitality|Residential|Commercial|Industrial
+address=street only; city=city name; state=2-letter code; units=integer rooms/keys/apartments
+broker=brokerage firm; brand=hotel flag/franchise name; dealLead=named broker contact; guidancePrice=asking price integer dollars
+yearBuilt=integer; renovationYear=last renovation year integer; floors=number of floors integer; parkingSpaces=total parking spaces integer
+constructionType=e.g. "Concrete","Wood Frame","Steel"; zoning=zoning code e.g. "C-2","MXD","R-3"
+marketName=metro/city market name e.g. "Philadelphia","Denver MSA"; submarket=sub-area e.g. "Center City","Airport"
+managementCompany=property management company name; franchiseExpiry=franchise/flag agreement expiry date
+loanAmount=existing loan balance integer dollars; loanType=e.g. "CMBS","Bridge","Freddie Mac"; interestRate=decimal e.g. 5.25; loanMaturity=maturity date string
+occupancyRate=decimal percentage e.g. 84.5; lotSizeAcres=decimal acres
+amenitiesSummary=comma list of amenities e.g. "Pool, Fitness Center, Meeting Rooms"
 
 DOCUMENTS:
 ${ctx}`,
@@ -299,6 +304,72 @@ ${ctx}`,
       }
       if (typeof metaJson.city === "string") {
         metaJson.city = metaJson.city.replace(/^(?:Inn|Suites?|Hotel|Resort|Marriott|Hilton|Hyatt|Holiday|Residence|Fairfield|Hampton|Courtyard|Downtown|Airport)\s+/i, "").trim();
+      }
+
+      // ── Regex fallbacks for secondary fields ────────────────────────────────
+      const scan40 = allText.substring(0, 40000);
+
+      if (!metaJson.marketName) {
+        const m = scan40.match(/(?:market|submarket|metro)[:\s–-]+([A-Z][A-Za-z\s]{2,30}?)(?:\s*MSA|\s*Metro|\s*market)?\s*[\n,;]/i);
+        if (m) metaJson.marketName = m[1].trim();
+      }
+      if (!metaJson.managementCompany) {
+        const m = scan40.match(/(?:managed by|management company|property manager|manager)[:\s–-]+([A-Z][A-Za-z0-9\s,\.]{2,50}?)(?:\n|,|;)/i);
+        if (m) metaJson.managementCompany = m[1].trim();
+      }
+      if (!metaJson.franchiseExpiry) {
+        const m = scan40.match(/(?:franchise|flag|license)\s*(?:agreement\s*)?(?:expir(?:es?|y|ation)|expires?|through|until)[:\s–-]+([A-Za-z0-9\s,\/]{3,30})/i);
+        if (m) metaJson.franchiseExpiry = m[1].trim();
+      }
+      if (!metaJson.loanAmount) {
+        const m = scan40.match(/(?:loan|mortgage|debt)\s*(?:amount|balance|outstanding)[:\s–-]*\$?\s*([\d,]+(?:\.\d+)?)\s*(M|MM|million|K)?/i);
+        if (m) {
+          let n = parseFloat(m[1].replace(/,/g, ""));
+          const sfx = (m[2] || "").toUpperCase();
+          if (/M|MM|MILLION/.test(sfx)) n *= 1_000_000;
+          else if (sfx === "K") n *= 1_000;
+          if (n > 100_000) metaJson.loanAmount = Math.round(n);
+        }
+      }
+      if (!metaJson.loanType) {
+        const m = scan40.match(/(?:loan type|debt type|mortgage type|financing)[:\s–-]+([A-Za-z0-9\s\-]{2,30}?)(?:\n|,|;|\.)/i);
+        if (m) metaJson.loanType = m[1].trim();
+        else if (/CMBS/i.test(scan40)) metaJson.loanType = "CMBS";
+        else if (/bridge\s*loan/i.test(scan40)) metaJson.loanType = "Bridge";
+        else if (/freddie\s*mac/i.test(scan40)) metaJson.loanType = "Freddie Mac";
+        else if (/fannie\s*mae/i.test(scan40)) metaJson.loanType = "Fannie Mae";
+      }
+      if (!metaJson.interestRate) {
+        const m = scan40.match(/interest\s*rate[:\s–-]*(\d{1,2}(?:\.\d{1,3})?)\s*%/i);
+        if (m) metaJson.interestRate = parseFloat(m[1]);
+      }
+      if (!metaJson.loanMaturity) {
+        const m = scan40.match(/(?:loan\s*maturity|matures?|maturity\s*date)[:\s–-]+([A-Za-z0-9\s,\/]{3,25})/i);
+        if (m) metaJson.loanMaturity = m[1].trim();
+      }
+      if (!metaJson.floors) {
+        const m = scan40.match(/\b(\d{1,3})\s*(?:-\s*)?(?:stor(?:y|ies)|floors?|levels?)\b/i);
+        if (m) { const n = parseInt(m[1], 10); if (n >= 1 && n <= 100) metaJson.floors = n; }
+      }
+      if (!metaJson.parkingSpaces) {
+        const m = scan40.match(/\b(\d{2,4})\s*(?:parking\s*)?(?:spaces?|stalls?|spots?)\b/i);
+        if (m) { const n = parseInt(m[1], 10); if (n >= 5 && n <= 5000) metaJson.parkingSpaces = n; }
+      }
+      if (!metaJson.zoning) {
+        const m = scan40.match(/zoning[:\s–-]+([A-Za-z0-9\-]{1,15})/i);
+        if (m) metaJson.zoning = m[1].trim();
+      }
+      if (!metaJson.constructionType) {
+        const m = scan40.match(/(?:construction\s*type|building\s*type|structure)[:\s–-]+([A-Za-z\s]{3,30}?)(?:\n|,|;|\.)/i);
+        if (m) metaJson.constructionType = m[1].trim();
+        else if (/concrete\s*frame/i.test(scan40)) metaJson.constructionType = "Concrete Frame";
+        else if (/wood\s*frame/i.test(scan40)) metaJson.constructionType = "Wood Frame";
+        else if (/steel\s*frame/i.test(scan40)) metaJson.constructionType = "Steel Frame";
+        else if (/masonry/i.test(scan40)) metaJson.constructionType = "Masonry";
+      }
+      if (!metaJson.renovationYear) {
+        const m = scan40.match(/(?:renovated?|last\s*renovation|remodel(?:ed)?|refurb(?:ished)?)\s*(?:in\s*)?(\d{4})/i);
+        if (m) { const yr = parseInt(m[1], 10); if (yr >= 1970 && yr <= 2030) metaJson.renovationYear = yr; }
       }
 
       const coords = stateCoords(metaJson.state as string || "");
