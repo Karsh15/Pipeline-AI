@@ -172,7 +172,7 @@ export async function runExtractionHandler(req: Request, res: Response) {
       for (const chunk of chunks) {
         try {
           const reply = await chat({
-            agent: "distill", model: MODELS.LIGHT, max_tokens: 300, temperature: 0.0,
+            agent: "distill", model: MODELS.LIGHT, max_tokens: 200, temperature: 0.0,
             messages: [
               { role: "system", content: "Extract CRE facts only. Output bullet points: numbers, dates, names, percentages, dollar amounts. Reply NO_DATA if no relevant data." },
               { role: "user", content: `File: ${d.name}\n---\n${chunk}` },
@@ -244,11 +244,11 @@ export async function runExtractionHandler(req: Request, res: Response) {
     // ── Agent 1: Metadata ─────────────────────────────────────────────────────
     await runAgent("metadata", async () => {
       emit(res, { type: "log", agent: "metadata", message: "Extracting property metadata..." });
-      const ctx = buildRawContext(14000, ["om", "market", "rent_roll"], ["financial", "legal", "capex"]);
+      const ctx = buildRawContext(8000, ["om", "market", "rent_roll"], ["financial", "legal", "capex"]);
       emit(res, { type: "log", agent: "metadata", message: `  ↳ context: ${ctx.length.toLocaleString()} chars (raw)` });
 
       const raw = await chat({
-        agent: "metadata", model: MODELS.STANDARD, max_tokens: 1024, temperature: 0.1,
+        agent: "metadata", model: MODELS.STANDARD, max_tokens: 512, temperature: 0.1,
         messages: [{
           role: "system",
           content: "You are a CRE analyst. Extract metadata from the OM and related docs. Output ONLY a raw JSON object. No preamble, no markdown. Never guess — if a field is genuinely missing, use 0 or empty string.",
@@ -574,7 +574,7 @@ ${ctx}`,
         const ctxSlice = (finText + "\n" + omText).slice(0, 6000);
         try {
           const raw = await chat({
-            agent: "financial", model: MODELS.STANDARD, max_tokens: 1200, temperature: 0.0,
+            agent: "financial", model: MODELS.STANDARD, max_tokens: 800, temperature: 0.0,
             messages: [{
               role: "system",
               content: "CRE financial analyst. Extract P&L line items from documents. Raw JSON only. Integers only (no decimals except pct). Omit fields that are 0. category must be 'income' or 'expense'.",
@@ -743,7 +743,7 @@ ${ctxSlice}`,
         emit(res, { type: "log", agent: "unit_mix", message: `  ↳ LLM gap-fill (${regexRows.length} regex rows)...` });
         try {
           const raw = await chat({
-            agent: "unit_mix", model: MODELS.LIGHT, max_tokens: 600, temperature: 0.0,
+            agent: "unit_mix", model: MODELS.LIGHT, max_tokens: 400, temperature: 0.0,
             messages: [{
               role: "system",
               content: "CRE analyst. Extract unit/room mix table. Raw JSON only. Integers only. Omit zero fields.",
@@ -824,32 +824,32 @@ ${umText.slice(0, 5000)}`,
     emit(res, { type: "log", agent: "ocr", message: "▶ Running agents 3-6 in parallel (summary · questions · criteria · risks)..." });
     await Promise.all([
       runAgent("summary", async () => {
-        const ctx = buildContext(BUDGET, ["om","market"],["financial","rent_roll","legal","capex"]);
-        const raw = await chat({ agent: "summary", model: MODELS.STANDARD, max_tokens: 512, temperature: 0.2, messages: [{ role: "system", content: "Senior CRE analyst. Output ONLY a raw JSON object — no markdown, no preamble." }, { role: "user", content: `Write brokerNarrative (2-3 sentences) and locationInsight (1-2 sentences). Return JSON: {"brokerNarrative":"","locationInsight":""}\n\nDOCUMENTS:\n${ctx}` }] });
+        const ctx = buildContext(3000, ["om","market"],["financial","rent_roll","legal","capex"]);
+        const raw = await chat({ agent: "summary", model: MODELS.STANDARD, max_tokens: 300, temperature: 0.2, messages: [{ role: "system", content: "CRE analyst. Output ONLY raw JSON, no markdown." }, { role: "user", content: `Return JSON: {"brokerNarrative":"2-3 sentences","locationInsight":"1-2 sentences"}\nDOCS:\n${ctx}` }] });
         debugReply("summary", raw);
         const j = safeParse<{ brokerNarrative?: string; locationInsight?: string }>(raw, {});
         if (j.brokerNarrative || j.locationInsight) await db.from("deals").update({ broker_narrative: j.brokerNarrative||"", location_insight: j.locationInsight||"" }).eq("id", dealId);
         return { summary: `narrative ${j.brokerNarrative?"✓":"✗"}, location ${j.locationInsight?"✓":"✗"}` };
       }),
       runAgent("questions", async () => {
-        const ctx = buildContext(BUDGET, ["om","financial","market"],["legal","capex"]);
-        const raw = await chat({ agent: "questions", model: MODELS.LIGHT, max_tokens: 768, temperature: 0.2, messages: [{ role: "system", content: "CRE due diligence analyst. Output ONLY a raw JSON object — no markdown." }, { role: "user", content: `Generate 7 sharp due diligence questions specific to THIS property. Return JSON: {"questions":[{"question":"","category":""}]}\n\nDOCUMENTS:\n${ctx}` }] });
+        const ctx = buildContext(3000, ["om","financial","market"],["legal","capex"]);
+        const raw = await chat({ agent: "questions", model: MODELS.LIGHT, max_tokens: 500, temperature: 0.2, messages: [{ role: "system", content: "CRE analyst. Output ONLY raw JSON, no markdown." }, { role: "user", content: `Generate 5 sharp due diligence questions for THIS property. Return JSON: {"questions":[{"question":"","category":""}]}\nDOCS:\n${ctx}` }] });
         debugReply("questions", raw);
         const j = safeParse<{ questions?: {question:string;category:string}[] }>(raw, {});
         if (j.questions?.length) { await db.from("questions").delete().eq("deal_id", dealId); await db.from("questions").insert(j.questions.map(q => ({ deal_id: dealId, question: q.question, category: q.category||"General" }))); }
         return { summary: `${j.questions?.length||0} questions` };
       }),
       runAgent("criteria", async () => {
-        const ctx = buildContext(BUDGET, ["financial","om","rent_roll"],["legal","capex","market"]);
-        const raw = await chat({ agent: "criteria", model: MODELS.STANDARD, max_tokens: 768, temperature: 0.1, messages: [{ role: "system", content: "CRE underwriter. Output ONLY a raw JSON object." }, { role: "user", content: `Evaluate deal against 7 acquisition criteria (Deal Size ≥$5M, NOI Margin ≥30%, Cap Rate 6-9%, Occupancy ≥80%, Year Built ≥1980, DSCR ≥1.20, Expense Ratio ≤55%). Return JSON: {"criteria":[{"criteria":"","requirement":"","actual":"","meets":true}]}\n\nDOCUMENTS:\n${ctx}` }] });
+        const ctx = buildContext(3000, ["financial","om","rent_roll"],["legal","capex","market"]);
+        const raw = await chat({ agent: "criteria", model: MODELS.STANDARD, max_tokens: 400, temperature: 0.1, messages: [{ role: "system", content: "CRE underwriter. Output ONLY raw JSON, no markdown." }, { role: "user", content: `Evaluate 7 criteria: Deal Size≥$5M, NOI Margin≥30%, Cap Rate 6-9%, Occupancy≥80%, Year Built≥1980, DSCR≥1.20, Expense Ratio≤55%. Return JSON: {"criteria":[{"criteria":"","requirement":"","actual":"","meets":true}]}\nDOCS:\n${ctx}` }] });
         debugReply("criteria", raw);
         const j = safeParse<{ criteria?: {criteria:string;requirement:string;actual:string;meets:boolean}[] }>(raw, {});
         if (j.criteria?.length) { await db.from("criteria").delete().eq("deal_id", dealId); await db.from("criteria").insert(j.criteria.map(c => ({ deal_id: dealId, ...c }))); }
         return { summary: `${j.criteria?.length||0} criteria (${j.criteria?.filter(c=>c.meets).length||0} pass)` };
       }),
       runAgent("risks", async () => {
-        const ctx = buildContext(BUDGET, ["legal","capex","financial","om"],["rent_roll","market"]);
-        const raw = await chat({ agent: "risks", model: MODELS.STANDARD, max_tokens: 1024, temperature: 0.15, messages: [{ role: "system", content: "CRE risk analyst. Output ONLY a raw JSON object." }, { role: "user", content: `Identify material risks and provide 3-5 AI explanations. Return JSON:\n{"risks":[{"description":"","severity":"critical|high|medium|low"}],"explanations":[{"fieldName":"","explanationText":"","sourceSnippet":"","sourcePage":0}]}\n\nDOCUMENTS:\n${ctx}` }] });
+        const ctx = buildContext(3000, ["legal","capex","financial","om"],["rent_roll","market"]);
+        const raw = await chat({ agent: "risks", model: MODELS.STANDARD, max_tokens: 600, temperature: 0.15, messages: [{ role: "system", content: "CRE risk analyst. Output ONLY raw JSON, no markdown." }, { role: "user", content: `List material risks and 3 AI explanations. Return JSON:\n{"risks":[{"description":"","severity":"critical|high|medium|low"}],"explanations":[{"fieldName":"","explanationText":"","sourceSnippet":"","sourcePage":0}]}\nDOCS:\n${ctx}` }] });
         debugReply("risks", raw);
         const j = safeParse<{ risks?: {description:string;severity:string}[]; explanations?: {fieldName:string;explanationText:string;sourceSnippet:string;sourcePage:number}[] }>(raw, {});
         if (j.risks?.length) { await db.from("risks").delete().eq("deal_id", dealId); await db.from("risks").insert(j.risks.map(r => ({ deal_id: dealId, description: r.description, severity: r.severity||"medium" }))); }

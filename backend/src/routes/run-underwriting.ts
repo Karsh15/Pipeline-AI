@@ -24,38 +24,34 @@ export async function runUnderwritingHandler(req: Request, res: Response) {
     const { data: unitMix }    = await db.from("unit_mix").select("*").eq("deal_id", dealId);
     const { data: risks }      = await db.from("risks").select("*").eq("deal_id", dealId);
 
-    const context = JSON.stringify({ deal, financials, unitMix, risks }, null, 2).substring(0, 8000);
+    // Build compact context: deal scalars + top financial rows only
+    const d = deal as Record<string, unknown>;
+    const compactDeal = {
+      name: d.name, assetType: d.asset_type, units: d.units,
+      guidancePrice: d.guidance_price, noi: d.noi, capRate: d.cap_rate,
+      dscr: d.dscr, occupancy: d.occupancy_rate, yearBuilt: d.year_built,
+      loanAmount: d.loan_amount, loanType: d.loan_type, interestRate: d.interest_rate,
+    };
+    const topFinancials = (financials || [])
+      .filter((r: Record<string,unknown>) => r.ttm && Number(r.ttm) !== 0)
+      .slice(0, 12)
+      .map((r: Record<string,unknown>) => ({ m: r.sub_category, cat: r.category, ttm: r.ttm }));
+    const compactRisks = (risks || []).slice(0, 5).map((r: Record<string,unknown>) => ({ d: r.description, s: r.severity }));
+    const context = JSON.stringify({ deal: compactDeal, financials: topFinancials, risks: compactRisks }).substring(0, 4000);
 
     emit(res, { type: "log", agent: "underwriting", message: "Calculating underwritten NOI..." });
 
     const uwRaw = await chat({
       agent: "underwriting",
       model: MODELS.STANDARD,
-      max_tokens: 2048,
+      max_tokens: 800,
       messages: [{
         role: "system",
-        content: "You are a CRE underwriter. Output ONLY a raw JSON object. No preamble, no markdown fences. Start reply with { and end with }.",
+        content: "CRE underwriter. Output ONLY raw JSON, no markdown. Start with { end with }.",
       }, {
         role: "user",
-        content: `Underwrite this deal. Return JSON:
-{
-  "underwrittenNOI": 0,
-  "stabilizedCapRate": 0,
-  "effectiveGrossIncome": 0,
-  "vacancyLoss": 0,
-  "operatingExpenses": 0,
-  "netOperatingIncome": 0,
-  "debtService": 0,
-  "dscr": 0,
-  "cashOnCash": 0,
-  "irr5yr": 0,
-  "exitCapRate": 0,
-  "buyBoxScore": 0,
-  "recommendation": "buy|watch|pass",
-  "rationale": "2-3 sentence investment rationale",
-  "keyAssumptions": ["assumption1","assumption2"]
-}
-DEAL DATA:\n${context}`,
+        content: `Underwrite this deal. Return JSON: {"underwrittenNOI":0,"stabilizedCapRate":0,"effectiveGrossIncome":0,"vacancyLoss":0,"operatingExpenses":0,"netOperatingIncome":0,"debtService":0,"dscr":0,"cashOnCash":0,"irr5yr":0,"exitCapRate":0,"buyBoxScore":0,"recommendation":"buy|watch|pass","rationale":"2-3 sentences","keyAssumptions":["a1","a2"]}
+DEAL:\n${context}`,
       }],
     });
 
