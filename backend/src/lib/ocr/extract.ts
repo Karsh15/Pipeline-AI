@@ -32,7 +32,7 @@ export async function extractDocumentText(
   const name = fileName.toLowerCase();
 
   if (/\.(xlsx|xls|csv|ods|tsv)$/.test(name)) {
-    const text = extractSpreadsheet(buffer);
+    const text = await extractSpreadsheet(buffer);
     return { text, method: "spreadsheet", pages: 1, avgConfidence: 100 };
   }
 
@@ -77,23 +77,21 @@ export async function extractDocumentText(
 
 /* ───────── Spreadsheet ───────── */
 
-function extractSpreadsheet(buffer: Buffer): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const XLSX = require("xlsx");
-  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+async function extractSpreadsheet(buffer: Buffer): Promise<string> {
+  const { Workbook } = await import("exceljs");
+  const wb = new Workbook();
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
   const sheets: string[] = [];
 
-  for (const sheetName of wb.SheetNames as string[]) {
-    const sheet = wb.Sheets[sheetName];
-    if (!sheet) continue;
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
-    const nonEmpty = rows.filter((r) => r.some((c) => c !== "" && c != null));
-    if (!nonEmpty.length) continue;
-    const lines = nonEmpty.map((row) =>
-      row.map((c) => formatCell(c)).join("\t").trimEnd()
-    );
-    sheets.push(`=== SHEET: ${sheetName} ===\n${lines.join("\n")}`);
-  }
+  wb.eachSheet((sheet) => {
+    const lines: string[] = [];
+    sheet.eachRow((row) => {
+      const cells = (row.values as unknown[]).slice(1); // index 0 is unused
+      const formatted = cells.map((c) => formatCell(c)).join("\t").trimEnd();
+      if (formatted.trim()) lines.push(formatted);
+    });
+    if (lines.length) sheets.push(`=== SHEET: ${sheet.name} ===\n${lines.join("\n")}`);
+  });
   return sheets.join("\n\n");
 }
 
@@ -105,6 +103,17 @@ function formatCell(cell: unknown): string {
     return `${m}/${d}/${cell.getFullYear()}`;
   }
   if (typeof cell === "number") return Number.isInteger(cell) ? cell.toString() : cell.toFixed(2);
+  if (typeof cell === "object") {
+    // exceljs rich text: { richText: [{ text: '...' }, ...] }
+    const rt = (cell as Record<string, unknown>).richText;
+    if (Array.isArray(rt)) return rt.map((r) => (r as Record<string, unknown>).text ?? "").join("").trim();
+    // exceljs hyperlink: { text: '...', hyperlink: '...' }
+    const t = (cell as Record<string, unknown>).text;
+    if (t != null) return String(t).trim();
+    // formula result: { formula: '...', result: ... }
+    const res = (cell as Record<string, unknown>).result;
+    if (res != null) return formatCell(res);
+  }
   return String(cell).trim();
 }
 

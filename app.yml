@@ -1,0 +1,55 @@
+# Pipeline AI — Phusion Passenger / LiteSpeed app config
+# Server layout (CloudLinux / cPanel shared hosting):
+#
+#   /home/pipelineai/public_html/
+#   ├── index.html                ← Vite frontend build entry
+#   ├── assets/                   ← Vite static assets
+#   └── apps/
+#       └── dist/                 ← app_root (package.json + node_modules live here)
+#           ├── server.js         ← compiled Express entry point
+#           ├── .env              ← secrets
+#           ├── package.json
+#           ├── node_modules/
+#           ├── lib/
+#           └── routes/
+
+---
+app_type: node
+app_root: /home/pipelineai/public_html/apps/dist
+startup_file: server.js
+node_path: /usr/bin/node
+
+# Port the Express server binds to (must match server.ts → PORT env var)
+port: 4000
+
+# Environment variables — mirror your .env file here or set them in cPanel
+environment:
+  NODE_ENV: production
+  PORT: "4000"
+
+  # Supabase
+  SUPABASE_URL: ""
+  SUPABASE_ANON_KEY: ""
+  SUPABASE_SERVICE_ROLE_KEY: ""
+
+  # NVIDIA NIM
+  NVIDIA_MODEL: "meta/llama-3.3-70b-instruct"
+  NVIDIA_TIMEOUT_MS: "90000"
+  NVIDIA_API_KEY: ""
+  NVIDIA_API_KEY_METADATA: ""
+  NVIDIA_API_KEY_FINANCIAL: ""
+  NVIDIA_API_KEY_UNIT_MIX: ""
+  NVIDIA_API_KEY_SUMMARY: ""
+  NVIDIA_API_KEY_QUESTIONS: ""
+  NVIDIA_API_KEY_CRITERIA: ""
+  NVIDIA_API_KEY_RISKS: ""
+  NVIDIA_API_KEY_UNDERWRITING: ""
+  NVIDIA_API_KEY_DISTILL: ""
+  NVIDIA_API_KEY_CHAT: ""
+
+  # Microsoft / Outlook OAuth
+  AZURE_CLIENT_ID: ""
+  AZURE_TENANT_ID: "common"
+  AZURE_CLIENT_SECRET: ""
+  NEXTAUTH_URL: "https://pipelineai.boulderconstruction.com"
+  OUTLOOK_POLL_INTERVAL_MS: "300000"

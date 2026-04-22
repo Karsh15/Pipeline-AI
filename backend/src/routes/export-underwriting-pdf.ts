@@ -12,7 +12,7 @@ const { default: URLResolver } = require("pdfmake/js/URLResolver.js") as { defau
 const vfs = (require("pdfmake/js/virtual-fs.js") as { default: { writeFileSync(name: string, data: Buffer): void } }).default;
 
 // Load local font files into pdfmake's virtual filesystem
-const FONTS_DIR = path.resolve(__dirname, "../../fonts");
+const FONTS_DIR = path.resolve(__dirname, "../fonts");
 for (const filename of ["Roboto-Regular.ttf", "Roboto-Medium.ttf", "Roboto-Italic.ttf", "Roboto-MediumItalic.ttf"]) {
   vfs.writeFileSync(filename, fs.readFileSync(path.join(FONTS_DIR, filename)));
 }

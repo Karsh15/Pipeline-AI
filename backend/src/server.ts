@@ -1,4 +1,14 @@
 import "dotenv/config";
+
+// Promise.try was added in Node 26 — polyfill for older runtimes
+if (typeof (Promise as unknown as Record<string, unknown>).try !== "function") {
+  (Promise as unknown as Record<string, unknown>).try = function <T>(fn: () => T | Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      try { resolve(fn()); } catch (e) { reject(e); }
+    });
+  };
+}
+
 import express from "express";
 import cors from "cors";
 import multer from "multer";
@@ -22,6 +32,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 // Allow the Vite dev server + your deployed frontend domain
 const ALLOWED = [
   "http://localhost:5173",
+  "https://site68128-lr1ovs.scloudsite101.com",
   process.env.APP_URL || "",
 ].filter(Boolean);
 
